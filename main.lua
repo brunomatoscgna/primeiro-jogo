@@ -9,9 +9,9 @@ require "mapa"
 -- ============================================================
 
 
-FOLHA     = folha.png
-FUNDO_OFF = fundo_off.png
-FUNDO_ON  = fundo_on.png
+FOLHA     = "folha.png"
+FUNDO_OFF = "fundo_off.png"
+FUNDO_ON  = "fundo_on.png"
 TILE = 16
 TELA_L, TELA_A = 480, 270
 MAPA_L = #MAPA[1]
