@@ -141,14 +141,6 @@ for lin = 0, MAPA_A - 1 do
   end
 end
 
--- Desenha uma imagem grande (ex.: fundo 480x272) tile a tile.
-local function desenhar_imagem(ref, x, y, cols, lins)
-  for ty = 0, lins - 1 do
-    for tx = 0, cols - 1 do
-      ui.tile(ref, ty * cols + tx, x + tx * TILE, y + ty * TILE)
-    end
-  end
-end
 
 -- ------------------------------------------------------------
 -- Estado do jogo
@@ -362,7 +354,7 @@ local function desenhar_cenario(frame)
     -- cidade ao fundo (só aparece perto do telhado), com leve parallax
     if cam < ALTURA_ANDAR * TILE and FUNDO_OFF then
       local fy = cam // 2   -- topo da imagem no topo da fase
-      desenhar_imagem(energia and FUNDO_ON or FUNDO_OFF, 0, fy, 30, 17)
+      ui.spr(energia and FUNDO_ON or FUNDO_OFF, 0, fy, false, false)  -- imagem inteira, sem régua
     end
     -- parede interna do prédio
     local id_fundo = energia and SPR.fundo_on or SPR.fundo
