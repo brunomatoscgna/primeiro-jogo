@@ -991,7 +991,7 @@ end
 local function desenhar_menu(frame)
   painel(100, 40, 380, 230)
   centro("FIM DOS TEMPOS", 56, cor("janela_on"))
-  centro("ENERGY IS DOWN.", 72, cor("texto"))
+  centro("APAGAO GERAL NO CONDOMINIO.", 72, cor("texto"))
   centro("Soh o SEU ADILSON pode salvar.", 84, cor("texto"))
   if ajuda then
     local linhas = {
