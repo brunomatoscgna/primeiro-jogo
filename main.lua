@@ -10,6 +10,7 @@ require "mapa"
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
+VERSAO = "1.30"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -502,6 +503,7 @@ local function desenhar_hud()
   ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 200, 3, cor("peca_l"))
   ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 390, 3,
            energia and cor("verde") or cor("vermelho"))
+  ui.print("v" .. VERSAO, TELA_L - 30, TELA_A - 10, cor("texto"))
   if mensagem and mensagem_t > 0 then
     ui.print(mensagem, TELA_L / 2 - #mensagem * 2, 250, cor("branco"))
   end
