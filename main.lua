@@ -7,12 +7,13 @@ require "mapa"
 -- Desça os 20 andares, pegue as peças e religue o gerador.
 -- Setas: andar | Z ou CIMA: pular | CIMA/BAIXO na escada: subir/descer
 -- Desvie das caveiras e dos fantasmas.
--- Comprimido (TADALA): por alguns segundos os fantasmas não tiram vida.
+-- Comprimido (TADALA): por alguns segundos, encostar num inimigo o derruba.
+-- Tomar outro com o TADALA ligado: o coração não aguenta.
 -- ============================================================
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.33"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.34"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -188,22 +189,33 @@ for lin = 1, MAPA_A do
     if c == "G" then gerador = { x = x, y = y } end
     if c == "S" then inicio = { x = x, y = y } end
     if c == "C" then table.insert(comprimidos, { x = x, y = y, pego = false }) end
+    local fundo = (lin - 1) // ALTURA_ANDAR      -- 0 no telhado: mais fundo, mais rápido
     if c == "K" then   -- caveira: anda no chão e vira nas paredes/beiradas
-      table.insert(inimigos, { tipo = "skull", x = x + 2, y = y + TILE - 16,
-                               w = 11, h = 16, vx = 0.5 })
+      table.insert(inimigos, { tipo = "skull", x0 = x + 2, y0 = y + TILE - 16,
+                               w = 11, h = 16, v0 = 0.5 + fundo * 0.03 })
     end
     if c == "F" then   -- fantasma: atravessa tudo, vai e volta flutuando
-      table.insert(inimigos, { tipo = "ghost", x = x, y = y, base_y = y,
-                               w = 14, h = 16, vx = 0.7, fase = col })
+      table.insert(inimigos, { tipo = "ghost", x0 = x, y0 = y,
+                               w = 14, h = 16, v0 = 0.6 + fundo * 0.04, fase = col })
     end
   end
 end
 ANDARES = MAPA_A // ALTURA_ANDAR
 
+-- põe cada inimigo vivo no lugar de origem
+local function reiniciar_inimigos()
+  for i, e in ipairs(inimigos) do
+    e.x, e.y, e.base_y = e.x0, e.y0, e.y0
+    e.vx = (i % 2 == 0) and e.v0 or -e.v0
+    e.morto, e.sumiu = false, false
+  end
+end
+reiniciar_inimigos()
+
 TOTAL_PECAS = #pecas
 
 player = {
-  x = inicio.x, y = inicio.y, w = 10, h = 15,   -- cabe embaixo de uma viga
+  x = inicio.x, y = inicio.y, w = 10, h = 19,   -- altura do desenho (cabeça não entra na viga)
   vx = 0, vy = 0, no_chao = false, dir = 1,
   escada = false,             -- true enquanto está pendurado na escada
   pecas = 0,
@@ -219,7 +231,7 @@ mensagem, mensagem_t = nil, 0
 
 -- Física
 GRAVIDADE  = 0.35
-PULO       = -5.6
+PULO       = -6.0   -- sobe ~51 px (3 blocos)
 VEL        = 2.2
 VEL_QUEDA  = 7
 VEL_ESCADA = 1.6
@@ -338,18 +350,19 @@ local function recomecar()
   p.vida, p.pecas, p.escada, p.tadala = VIDA_MAX, 0, false, 0
   for _, pc in ipairs(pecas) do pc.pega = false end
   for _, cp in ipairs(comprimidos) do cp.pego = false end
+  reiniciar_inimigos()
   checkpoint = { x = inicio.x, y = inicio.y }
   ultimo_andar = 1
 end
 
--- tira 1 de vida e volta ao checkpoint (início do andar)
-local function levar_dano(texto)
+-- tira vida (1 por padrão) e volta ao checkpoint (início do andar)
+local function levar_dano(texto, quanto)
   local p = player
-  p.vida = p.vida - 1
+  p.vida = p.vida - (quanto or 1)
   p.escada = false
   if p.vida <= 0 then
     recomecar()
-    avisar("SEM VIDA! Recomecando do telhado.", 150)
+    avisar(quanto and texto or "SEM VIDA! Recomecando do telhado.", 180)
   else
     p.x, p.y, p.vx, p.vy = checkpoint.x, checkpoint.y, 0, 0
     avisar(texto, 90)
@@ -360,7 +373,16 @@ end
 -- caveiras andam e viram; fantasmas flutuam de parede a parede
 local function mover_inimigos(frame)
   for _, e in ipairs(inimigos) do
-    if e.tipo == "skull" then
+    if e.sumiu then
+      -- nada
+    elseif e.morto then
+      -- derrubado pelo TADALA: desliza até bater em algo e some
+      e.x = e.x + e.vx
+      local fx = e.vx > 0 and (e.x + e.w) or e.x
+      if solido_px(fx, e.y + e.h // 2) or fx < TILE or fx > (MAPA_L - 1) * TILE then
+        e.sumiu = true
+      end
+    elseif e.tipo == "skull" then
       local nx = e.x + e.vx
       local fx = e.vx > 0 and (nx + e.w) or (nx - 1)       -- ponto da frente
       local col, lin_pe = fx // TILE, (e.y + e.h) // TILE
@@ -394,12 +416,17 @@ local function interagir()
     end
   end
 
-  -- comprimidos: liga o TADALA
+  -- comprimidos: liga o TADALA (dois de uma vez: o coração não aguenta)
   if p.tadala > 0 then p.tadala = p.tadala - 1 end
   for _, cp in ipairs(comprimidos) do
     if not cp.pego and toca(p, cp.x + 3, cp.y + 8, 10, 8) then
       cp.pego = true
+      if p.tadala > 0 then
+        levar_dano("OVERDOSE! O coracao nao aguentou.", VIDA_MAX)
+        return
+      end
       p.tadala = TADALA_FRAMES
+      avisar("TADALA ON! Nao tome outro agora.", 120)
     end
   end
 
@@ -417,10 +444,13 @@ local function interagir()
   end
 
   -- inimigos (a caixa de toque é um pouco menor que o desenho)
-  if p.invencivel == 0 then
-    for _, e in ipairs(inimigos) do
-      local atravessa = e.tipo == "ghost" and p.tadala > 0
-      if not atravessa and toca(p, e.x + 2, e.y + 2, e.w - 4, e.h - 4) then
+  for _, e in ipairs(inimigos) do
+    if not e.morto and not e.sumiu and toca(p, e.x + 2, e.y + 2, e.w - 4, e.h - 4) then
+      if p.tadala > 0 then
+        -- TADALA: derruba o inimigo, que sai deslizando para longe
+        e.morto = true
+        e.vx = (e.x + e.w / 2 >= p.x + p.w / 2) and 5 or -5
+      elseif p.invencivel == 0 then
         levar_dano(e.tipo == "skull" and "Uma caveira te pegou!" or "Um fantasma te assustou!")
         return
       end
@@ -618,11 +648,11 @@ local function desenhar_objetos(frame)
 end
 
 -- desenha um personagem pelos pés, centralizado na caixa de colisão
-local function desenhar_boneco(anim, movendo, frame, x, y, w, h, virado)
+local function desenhar_boneco(anim, movendo, frame, x, y, w, h, virado, de_ponta)
   local q = anim and (movendo and anim.andando or anim.parado)
   if not q then return false end
   local i = (frame // 8) % 4 + 1
-  ui.spr(q[i], math.floor(x + w / 2 - 8), math.floor(y + h - 20), virado, false)
+  ui.spr(q[i], math.floor(x + w / 2 - 8), math.floor(y + h - 20), virado, de_ponta or false)
   return true
 end
 
@@ -641,9 +671,9 @@ end
 local function desenhar_inimigos(frame)
   local cam = math.floor(camera_y)
   for _, e in ipairs(inimigos) do
-    local some = e.tipo == "ghost" and player.tadala > 0 and (frame // 3) % 2 == 0
-    if e.y + e.h > cam and e.y < cam + TELA_A and not some then
-      if not desenhar_boneco(ANIM[e.tipo], true, frame, e.x, e.y, e.w, e.h, e.vx < 0) then
+    if not e.sumiu and e.y + e.h > cam and e.y < cam + TELA_A then
+      if not desenhar_boneco(ANIM[e.tipo], not e.morto, frame, e.x, e.y, e.w, e.h,
+                             e.vx < 0, e.morto) then
         ui.rectfill(e.x, e.y, e.x + e.w - 1, e.y + e.h - 1,
                     e.tipo == "skull" and cor("branco") or cor("estrela"))
       end
