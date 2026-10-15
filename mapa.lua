@@ -8,7 +8,7 @@
 --   ^  fios soltando faísca        P  peça do gerador
 --   G  gerador                     S  início do jogador
 --   K  caveira (anda no chão)      F  fantasma (flutua)
---   C  comprimido (TADALA)
+--   C  comprimido (TADALA)         E  elevador (sobe ao topo)
 -- ============================================================
 
 MAPA = {
@@ -208,9 +208,9 @@ MAPA = {
   "#  H                         #",
   "#  H                         #",
   "#  H   F                     #",
-  "#  H         F       F    F  #",
-  "#  H          #         #    #",
-  "#  H    ^^^   #   ^^    G    #",
+  "#  H         F               #",
+  "#  H          #              #",
+  "#  H    ^^^   #   ^^   G   E #",
   "##############################",
 }
 

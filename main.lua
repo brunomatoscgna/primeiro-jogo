@@ -7,13 +7,15 @@ require "mapa"
 -- Desça os 20 andares, pegue as peças e religue o gerador.
 -- Setas: andar | Z ou CIMA: pular | CIMA/BAIXO na escada: subir/descer
 -- Desvie das caveiras e dos fantasmas.
--- Comprimido (TADALA): por alguns segundos, encostar num inimigo o derruba.
+-- Comprimido (TADALA): por 8 segundos o vovô vira samurai, os monstros fogem
+-- dele e encostar num inimigo o derruba (caveira 100, fantasma 250 pontos).
 -- Tomar outro com o TADALA ligado: o coração não aguenta.
+-- Checkpoint a cada 5 andares. Com a energia de volta, o elevador leva ao topo.
 -- ============================================================
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.34"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.35"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -103,10 +105,10 @@ FOLHA_COLS = 16                -- tiles por linha na folha.png
 
 -- Personagens (GIFs de Sprites/Characters convertidos p/ PNG, 4 quadros cada):
 --   Sprites/grandpa_walk/1.png -> Sprites.Sprites.grandpa_walk["1"]
-local function quadros(nome)
+local function quadros(nome, n)
   local ok, q = pcall(function()
     local pasta, q = Sprites.Sprites[nome], {}
-    for i = 1, 4 do
+    for i = 1, n or 4 do
       q[i] = pasta[tostring(i)]
       if type(q[i]) ~= "table" then return nil end
     end
@@ -116,8 +118,11 @@ local function quadros(nome)
   return nil
 end
 
+-- l/a = tamanho do desenho, cx = onde fica o meio do corpo, n = quadros
+local SAMURAI = quadros("samurai_run", 8)   -- Sprites/samurai_run/1..8.png (34x31)
 ANIM = {
   grandpa = { parado = quadros("grandpa_idle"), andando = quadros("grandpa_walk") },
+  samurai = { parado = SAMURAI, andando = SAMURAI, l = 34, a = 31, cx = 19, n = 8, vel = 4 },
   skull   = { parado = quadros("skull_idle"),   andando = quadros("skull_walk") },
   ghost   = { parado = quadros("ghost_idle"),   andando = quadros("ghost_walk") },
 }
@@ -180,6 +185,7 @@ gerador = nil
 inicio = { x = 32, y = 32 }
 inimigos = {}
 comprimidos = {}
+elevador = nil       -- no subsolo; sobe ao topo depois que a energia volta
 
 for lin = 1, MAPA_A do
   for col = 1, MAPA_L do
@@ -189,6 +195,7 @@ for lin = 1, MAPA_A do
     if c == "G" then gerador = { x = x, y = y } end
     if c == "S" then inicio = { x = x, y = y } end
     if c == "C" then table.insert(comprimidos, { x = x, y = y, pego = false }) end
+    if c == "E" then elevador = { x = x, y = y - TILE, y0 = y - TILE, subindo = false } end
     local fundo = (lin - 1) // ALTURA_ANDAR      -- 0 no telhado: mais fundo, mais rápido
     if c == "K" then   -- caveira: anda no chão e vira nas paredes/beiradas
       table.insert(inimigos, { tipo = "skull", x0 = x + 2, y0 = y + TILE - 16,
@@ -202,20 +209,32 @@ for lin = 1, MAPA_A do
 end
 ANDARES = MAPA_A // ALTURA_ANDAR
 
+-- Checkpoints: andares 6, 11 e 16 (a cada 5). A bandeira fica ao lado da
+-- escada por onde se chega ao andar.
+CHECKPOINTS = {}
+for a = 6, ANDARES - 1, 5 do
+  local lin = (a - 1) * ALTURA_ANDAR + 7          -- linha do chão do andar
+  local col = MAPA[lin + 1]:find("H") or 2
+  local lado = col < MAPA_L / 2 and 1 or -1
+  table.insert(CHECKPOINTS, { andar = a, x = (col - 1 + lado * 2) * TILE,
+                              y = lin * TILE, ativo = false })
+end
+
 -- põe cada inimigo vivo no lugar de origem
 local function reiniciar_inimigos()
   for i, e in ipairs(inimigos) do
     e.x, e.y, e.base_y = e.x0, e.y0, e.y0
     e.vx = (i % 2 == 0) and e.v0 or -e.v0
-    e.morto, e.sumiu = false, false
+    e.morto, e.sumiu, e.louco, e.fase_t = false, false, false, i
   end
 end
 reiniciar_inimigos()
 
 TOTAL_PECAS = #pecas
 
+ALTURA_VOVO, ALTURA_SAMURAI = 19, 30   -- caixa de colisão (cabe embaixo de uma viga)
 player = {
-  x = inicio.x, y = inicio.y, w = 10, h = 19,   -- altura do desenho (cabeça não entra na viga)
+  x = inicio.x, y = inicio.y, w = 10, h = ALTURA_VOVO,
   vx = 0, vy = 0, no_chao = false, dir = 1,
   escada = false,             -- true enquanto está pendurado na escada
   pecas = 0,
@@ -224,7 +243,14 @@ player = {
 }
 VIDA_MAX = 3
 TADALA_FRAMES = 8 * 60        -- 8 segundos
-checkpoint = { x = inicio.x, y = inicio.y }
+PONTOS = { skull = 100, ghost = 250, peca = 500, energia = 1000, fim = 2000, vida = 500 }
+score = 0
+venceu = false
+-- checkpoint = onde volta depois de um dano (início do andar atual)
+-- salvamento = onde recomeça sem vidas (último checkpoint de 5 em 5 andares)
+-- (guardam a posição dos pés, porque a altura muda com o TADALA)
+checkpoint = { x = inicio.x, pe = inicio.y + ALTURA_VOVO }
+salvamento = { x = inicio.x, pe = inicio.y + ALTURA_VOVO, andar = 1 }
 camera_y = 0
 energia = false
 mensagem, mensagem_t = nil, 0
@@ -343,28 +369,56 @@ end
 
 local ultimo_andar = 1
 
--- Sem vida: recomeça do telhado, com as peças de volta no lugar
-local function recomecar()
+-- TADALA liga/desliga: o vovô vira samurai (mais alto; cresce para cima)
+local function samurai(ligar)
   local p = player
-  p.x, p.y, p.vx, p.vy = inicio.x, inicio.y, 0, 0
-  p.vida, p.pecas, p.escada, p.tadala = VIDA_MAX, 0, false, 0
-  for _, pc in ipairs(pecas) do pc.pega = false end
-  for _, cp in ipairs(comprimidos) do cp.pego = false end
-  reiniciar_inimigos()
-  checkpoint = { x = inicio.x, y = inicio.y }
-  ultimo_andar = 1
+  local h = ligar and ALTURA_SAMURAI or ALTURA_VOVO
+  p.y = p.y + p.h - h
+  p.h = h
+  if not ligar then p.tadala = 0 end
 end
 
--- tira vida (1 por padrão) e volta ao checkpoint (início do andar)
+local function ir_para(ponto)
+  local p = player
+  p.x, p.y, p.vx, p.vy, p.escada = ponto.x, ponto.pe - p.h, 0, 0, false
+end
+
+-- Sem vida: volta ao último checkpoint (de 5 em 5 andares) com vida cheia.
+-- Peças e pontos ficam; inimigos voltam.
+local function recomecar()
+  local p = player
+  samurai(false)
+  p.vida = VIDA_MAX
+  ir_para(salvamento)
+  reiniciar_inimigos()
+  checkpoint = { x = salvamento.x, pe = salvamento.pe }
+  ultimo_andar = salvamento.andar
+end
+
+-- Jogo novo (depois de vencer)
+local function jogo_novo()
+  local p = player
+  for _, pc in ipairs(pecas) do pc.pega = false end
+  for _, cp in ipairs(comprimidos) do cp.pego = false end
+  for _, c in ipairs(CHECKPOINTS) do c.ativo = false end
+  p.pecas, score, energia, venceu = 0, 0, false, false
+  if elevador then elevador.y, elevador.subindo = elevador.y0, false end
+  salvamento = { x = inicio.x, pe = inicio.y + ALTURA_VOVO, andar = 1 }
+  recomecar()
+  camera_y = 0
+end
+
+-- tira vida (1 por padrão) e volta ao início do andar
 local function levar_dano(texto, quanto)
   local p = player
   p.vida = p.vida - (quanto or 1)
   p.escada = false
   if p.vida <= 0 then
     recomecar()
-    avisar(quanto and texto or "SEM VIDA! Recomecando do telhado.", 180)
+    local onde = salvamento.andar == 1 and "do telhado" or ("do andar " .. salvamento.andar)
+    avisar((quanto and texto or "SEM VIDA!") .. " Recomecando " .. onde .. ".", 180)
   else
-    p.x, p.y, p.vx, p.vy = checkpoint.x, checkpoint.y, 0, 0
+    ir_para(checkpoint)
     avisar(texto, 90)
   end
   p.invencivel = 60
@@ -382,7 +436,25 @@ local function mover_inimigos(frame)
       if solido_px(fx, e.y + e.h // 2) or fx < TILE or fx > (MAPA_L - 1) * TILE then
         e.sumiu = true
       end
+    elseif player.tadala > 0 and andar_atual(e.y + e.h - player.h) == andar_atual(player.y)
+           and math.abs(e.x - player.x) < 220 then
+      -- viu o samurai: foge enlouquecido para o lado oposto
+      e.louco = true
+      local dir = (e.x + e.w / 2 < player.x + player.w / 2) and -1 or 1
+      e.vx = dir * e.v0
+      local passo = dir * e.v0 * 2.5
+      if e.tipo == "skull" then
+        local fx = dir > 0 and (e.x + passo + e.w) or (e.x + passo - 1)
+        local col, lin_pe = fx // TILE, (e.y + e.h) // TILE
+        local tem_chao = solido(bloco(col, lin_pe)) or bloco(col, lin_pe) == "H"
+        local barreira = solido_px(fx, e.y + e.h - 1) or bloco(col, lin_pe - 1) == "^"
+        if tem_chao and not barreira then e.x = e.x + passo end   -- encurralada: treme
+      else
+        e.x = ui.mid(TILE, e.x + passo, (MAPA_L - 1) * TILE - e.w)
+        e.y = e.base_y + math.sin(frame * 0.3 + e.fase) * 14
+      end
     elseif e.tipo == "skull" then
+      e.louco = false
       local nx = e.x + e.vx
       local fx = e.vx > 0 and (nx + e.w) or (nx - 1)       -- ponto da frente
       local col, lin_pe = fx // TILE, (e.y + e.h) // TILE
@@ -390,6 +462,7 @@ local function mover_inimigos(frame)
       local barreira = solido_px(fx, e.y + e.h - 1) or bloco(col, lin_pe - 1) == "^"
       if barreira or not tem_chao then e.vx = -e.vx else e.x = nx end
     else
+      e.louco = false
       e.x = e.x + e.vx
       if e.x < TILE or e.x + e.w > (MAPA_L - 1) * TILE then e.vx = -e.vx end
       e.y = e.base_y + math.sin(frame * 0.04 + e.fase) * 20
@@ -400,11 +473,19 @@ end
 local function interagir()
   local p = player
 
-  -- mudou de andar (descendo ou subindo) = novo checkpoint
+  -- mudou de andar (descendo ou subindo) = volta para cá depois de um dano
   local a = andar_atual(p.y)
   if p.no_chao and not p.escada and a ~= ultimo_andar then
     ultimo_andar = a
-    checkpoint = { x = p.x, y = p.y }
+    checkpoint = { x = p.x, pe = p.y + p.h }
+    -- checkpoint de 5 em 5 andares: recomeça daqui se perder todas as vidas
+    for _, c in ipairs(CHECKPOINTS) do
+      if c.andar == a and not c.ativo then
+        c.ativo = true
+        salvamento = { x = p.x, pe = p.y + p.h, andar = a }
+        avisar("CHECKPOINT! Andar " .. a, 120)
+      end
+    end
   end
 
   -- peças
@@ -412,12 +493,16 @@ local function interagir()
     if not pc.pega and toca(p, pc.x + 3, pc.y + 3, 10, 10) then
       pc.pega = true
       p.pecas = p.pecas + 1
+      score = score + PONTOS.peca
       avisar("PECA " .. p.pecas .. "/" .. TOTAL_PECAS .. " COLETADA!")
     end
   end
 
   -- comprimidos: liga o TADALA (dois de uma vez: o coração não aguenta)
-  if p.tadala > 0 then p.tadala = p.tadala - 1 end
+  if p.tadala > 0 then
+    p.tadala = p.tadala - 1
+    if p.tadala == 0 then samurai(false) end
+  end
   for _, cp in ipairs(comprimidos) do
     if not cp.pego and toca(p, cp.x + 3, cp.y + 8, 10, 8) then
       cp.pego = true
@@ -426,6 +511,7 @@ local function interagir()
         return
       end
       p.tadala = TADALA_FRAMES
+      samurai(true)
       avisar("TADALA ON! Nao tome outro agora.", 120)
     end
   end
@@ -450,6 +536,7 @@ local function interagir()
         -- TADALA: derruba o inimigo, que sai deslizando para longe
         e.morto = true
         e.vx = (e.x + e.w / 2 >= p.x + p.w / 2) and 5 or -5
+        score = score + PONTOS[e.tipo]
       elseif p.invencivel == 0 then
         levar_dano(e.tipo == "skull" and "Uma caveira te pegou!" or "Um fantasma te assustou!")
         return
@@ -461,10 +548,39 @@ local function interagir()
   if gerador and not energia and toca(p, gerador.x, gerador.y, TILE, TILE) then
     if p.pecas >= TOTAL_PECAS then
       energia = true
-      avisar("ENERGIA RESTAURADA!", 100000)
+      score = score + PONTOS.energia
+      avisar("ENERGIA RESTAURADA! Va ate o elevador.", 300)
     elseif mensagem_t <= 0 then
       avisar("Faltam " .. (TOTAL_PECAS - p.pecas) .. " pecas.", 60)
     end
+  end
+
+  -- elevador: com energia, CIMA na porta para subir
+  local el = elevador
+  if el and not el.subindo and toca(p, el.x, el.y, TILE, 2 * TILE) then
+    if not energia then
+      if mensagem_t <= 0 then avisar("Elevador sem energia.", 60) end
+    elseif ui.btn(UP) then
+      el.subindo = true
+      samurai(false)
+      p.x, p.vx, p.vy = el.x + (TILE - p.w) / 2, 0, 0
+      avisar("SUBINDO...", 100000)
+    elseif mensagem_t <= 0 then
+      avisar("Aperte CIMA para subir.", 60)
+    end
+  end
+end
+
+-- elevador subindo até o telhado; ao chegar, fim de jogo
+local function mover_elevador()
+  local el, p = elevador, player
+  local topo = (ALTURA_ANDAR - 1) * TILE - 2 * TILE   -- cabine no chão do telhado
+  el.y = math.max(el.y - 8, topo)
+  p.y = el.y + 2 * TILE - p.h
+  if el.y <= topo and not venceu then
+    venceu = true
+    score = score + PONTOS.fim + p.vida * PONTOS.vida
+    mensagem_t = 0
   end
 end
 
@@ -651,9 +767,40 @@ end
 local function desenhar_boneco(anim, movendo, frame, x, y, w, h, virado, de_ponta)
   local q = anim and (movendo and anim.andando or anim.parado)
   if not q then return false end
-  local i = (frame // 8) % 4 + 1
-  ui.spr(q[i], math.floor(x + w / 2 - 8), math.floor(y + h - 20), virado, de_ponta or false)
+  local n, vel = anim.n or 4, anim.vel or 8
+  local i = movendo and ((frame // vel) % n + 1) or (anim.n and 1 or ((frame // vel) % n + 1))
+  local l, cx = anim.l or 16, anim.cx or 8
+  if virado then cx = l - cx end
+  ui.spr(q[i], math.floor(x + w / 2 - cx), math.floor(y + h - (anim.a or 20)), virado, de_ponta or false)
   return true
+end
+
+local function desenhar_elevador(frame)
+  local el = elevador
+  if not el then return end
+  local x, y = el.x, math.floor(el.y)
+  if el.subindo then   -- cabo até o teto
+    ui.line(x + 7, 0, x + 7, y, cor("viga"))
+  end
+  ui.rectfill(x - 1, y, x + 16, y + 31, cor("viga"))
+  ui.rect(x - 1, y, x + 16, y + 31, cor("rebite"))
+  if el.subindo then   -- vovô dentro, pela janelinha
+    ui.rectfill(x + 3, y + 8, x + 12, y + 14, cor("ceu"))
+    ui.rectfill(x + 5, y + 9, x + 10, y + 14, cor("pele"))
+  else
+    ui.line(x + 7, y + 6, x + 7, y + 31, cor("rebite"))       -- portas
+  end
+  local luz = energia and ((frame // 15) % 2 == 0 and cor("verde") or cor("peca_l")) or cor("vermelho")
+  ui.rectfill(x + 5, y + 2, x + 10, y + 4, luz)
+end
+
+local function desenhar_checkpoints(frame)
+  for _, c in ipairs(CHECKPOINTS) do
+    local x, y = c.x + 4, c.y
+    ui.line(x, y, x, y + 15, cor("rebite"))
+    local onda = c.ativo and ((frame // 10) % 2) or 0
+    ui.rectfill(x + 1, y + onda, x + 8, y + 5 + onda, c.ativo and cor("verde") or cor("vermelho"))
+  end
 end
 
 local function desenhar_comprimidos(frame)
@@ -672,7 +819,8 @@ local function desenhar_inimigos(frame)
   local cam = math.floor(camera_y)
   for _, e in ipairs(inimigos) do
     if not e.sumiu and e.y + e.h > cam and e.y < cam + TELA_A then
-      if not desenhar_boneco(ANIM[e.tipo], not e.morto, frame, e.x, e.y, e.w, e.h,
+      local tx = e.louco and ((frame + e.fase_t) % 3 - 1) or 0   -- tremendo de medo
+      if not desenhar_boneco(ANIM[e.tipo], not e.morto, frame, e.x + tx, e.y, e.w, e.h,
                              e.vx < 0, e.morto) then
         ui.rectfill(e.x, e.y, e.x + e.w - 1, e.y + e.h - 1,
                     e.tipo == "skull" and cor("branco") or cor("estrela"))
@@ -684,8 +832,10 @@ end
 local function desenhar_player(frame)
   local p = player
   if p.invencivel > 0 and (frame // 4) % 2 == 0 then return end  -- pisca
+  if elevador and elevador.subindo then return end   -- está dentro do elevador
   local movendo = p.vx ~= 0 or (p.escada and p.vy ~= 0) or not p.no_chao
-  if desenhar_boneco(ANIM.grandpa, movendo, frame, p.x, p.y, p.w, p.h, p.dir < 0) then
+  local anim = (p.tadala > 0 and ANIM.samurai.andando) and ANIM.samurai or ANIM.grandpa
+  if desenhar_boneco(anim, movendo, frame, p.x, p.y, p.w, p.h, p.dir < 0) then
     return
   end
   local x, y = math.floor(p.x), math.floor(p.y)
@@ -699,7 +849,8 @@ local function diagnostico_sprites()
   local padrao = { ui=1, sfx=1, string=1, table=1, math=1, os=1, io=1,
     coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
     C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
-    inicio=1, inimigos=1, ANIM=1, comprimidos=1 }
+    inicio=1, inimigos=1, ANIM=1, comprimidos=1, elevador=1, CHECKPOINTS=1,
+    checkpoint=1, salvamento=1, PONTOS=1 }
   local y = 20
   ui.print("SPRITES NAO ENCONTRADOS. Tabelas globais:", 4, y, cor("vermelho"))
   for nome, v in pairs(_G) do
@@ -732,14 +883,15 @@ end
 
 local function desenhar_hud()
   ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
-  ui.print("ANDAR " .. andar_atual(player.y) .. "/" .. ANDARES, 6, 3, cor("texto"))
+  ui.print("ANDAR " .. andar_atual(player.y) .. "/" .. ANDARES, 4, 3, cor("texto"))
   -- vida em corações
-  ui.print("VIDA", 100, 3, cor("texto"))
+  ui.print("VIDA", 78, 3, cor("texto"))
   for i = 1, VIDA_MAX do
-    desenhar_coracao(130 + (i - 1) * 12, 3, i <= player.vida and cor("vermelho") or cor("viga"))
+    desenhar_coracao(106 + (i - 1) * 12, 3, i <= player.vida and cor("vermelho") or cor("viga"))
   end
-  ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 200, 3, cor("peca_l"))
-  ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 340, 3,
+  ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 152, 3, cor("peca_l"))
+  ui.print("SCORE " .. string.format("%06d", score), 228, 3, cor("janela_on"))
+  ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 326, 3,
            energia and cor("verde") or cor("vermelho"))
   ui.print("v" .. VERSAO, TELA_L - 36, 3, cor("estrela"))
   if player.tadala > 0 then
@@ -749,41 +901,36 @@ local function desenhar_hud()
     ui.print(txt, TELA_L / 2 - #txt * 3, 22, c)
   end
   if mensagem and mensagem_t > 0 then
-    ui.print(mensagem, TELA_L / 2 - #mensagem * 2, 250, cor("branco"))
+    ui.print(mensagem, TELA_L / 2 - #mensagem * 3, 250, cor("branco"))
+  end
+  if venceu then
+    ui.rectfill(110, 90, 370, 170, cor("ceu"))
+    ui.rect(110, 90, 370, 170, cor("janela_on"))
+    local linhas = { "VOCE RELIGOU A CIDADE!", "SCORE " .. string.format("%06d", score),
+                     "Z para jogar de novo" }
+    for i, t in ipairs(linhas) do
+      ui.print(t, TELA_L / 2 - #t * 3, 100 + i * 16, i == 2 and cor("janela_on") or cor("branco"))
+    end
   end
 end
 
 -- ------------------------------------------------------------
 -- Loop principal (chamado por game.lua a cada frame)
 -- ------------------------------------------------------------
--- Cores da paleta são 15 bits (5 por canal). Descobre de que lado fica o
--- vermelho olhando a cor 0xac3232 (vermelho forte = 21, azul = 6).
-local VERMELHO_EM_BAIXO = true
-do
-  local ok, v = pcall(function() return Palette[Palette.hex(0xac3232) + 1] end)
-  if ok and type(v) == "number" then VERMELHO_EM_BAIXO = (v % 32) > ((v // 1024) % 32) end
-end
-
-local function avermelhar(v)
-  if type(v) ~= "number" then return v end
-  local a, b, c = v % 32, (v // 32) % 32, (v // 1024) % 32
-  local r, g, bl
-  if VERMELHO_EM_BAIXO then r, g, bl = a, b, c else r, g, bl = c, b, a end
-  r = math.min(31, r + 8)
-  g, bl = g * 2 // 5, bl * 2 // 5
-  if VERMELHO_EM_BAIXO then return r + g * 32 + bl * 1024 end
-  return bl + g * 32 + r * 1024
-end
-
 function loop(frame)
-  local tadala = player.tadala > 0
   for i = 1, #Palette do
-    ui.palset(i - 1, tadala and avermelhar(Palette[i]) or Palette[i])
+    ui.palset(i - 1, Palette[i])
   end
 
-  mover_player()
+  if venceu then
+    if ui.btnp(BTN_Z) then jogo_novo() end
+  elseif elevador and elevador.subindo then
+    mover_elevador()
+  else
+    mover_player()
+    interagir()
+  end
   mover_inimigos(frame)
-  interagir()
   atualizar_camera()
   if mensagem_t > 0 then mensagem_t = mensagem_t - 1 end
 
@@ -793,9 +940,11 @@ function loop(frame)
   ui.camera(0, math.floor(camera_y))
   desenhar_cenario(frame)
   desenhar_objetos(frame)
+  desenhar_checkpoints(frame)
   desenhar_comprimidos(frame)
   desenhar_inimigos(frame)
   desenhar_player(frame)
+  desenhar_elevador(frame)
 
   ui.camera(0, 0)
   desenhar_hud()
