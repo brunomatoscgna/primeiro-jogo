@@ -1,5 +1,5 @@
 require "palette"
-require "sprites"
+local MOD_SPRITES = require "sprites"
 require "mapa"
 
 -- ============================================================
@@ -8,10 +8,6 @@ require "mapa"
 -- Setas: andar | Z ou CIMA: pular
 -- ============================================================
 
-
-FOLHA     = Sprites.folha
-FUNDO_OFF = Sprites.fundo_off
-FUNDO_ON  = Sprites.fundo_on
 TILE = 16
 TELA_L, TELA_A = 480, 270
 MAPA_L = #MAPA[1]
@@ -69,9 +65,30 @@ end
 -- >>> AJUSTE AQUI: aponte para as referências de sprite do Lupi. <<<
 -- Enquanto FOLHA for nil, o jogo usa os desenhos provisórios.
 -- ------------------------------------------------------------
-FOLHA     = FOLHA     or nil   -- folha.png
-FUNDO_OFF = FUNDO_OFF or nil   -- fundo_off.png
-FUNDO_ON  = FUNDO_ON  or nil   -- fundo_on.png
+-- Procura a referência de cada PNG da pasta Sprites/ pelos nomes mais prováveis.
+local function achar_sprite(nome)
+  local Maiusc = nome:sub(1, 1):upper() .. nome:sub(2)
+  local candidatos = {
+    function() return MOD_SPRITES[nome] end,
+    function() return Sprites[nome] end,
+    function() return sprites[nome] end,
+    function() return SPRITES[nome] end,
+    function() return _G[nome] end,
+    function() return _G[Maiusc] end,
+    function() return _G[nome:upper()] end,
+    function() return Sprites[nome .. ".png"] end,
+    function() return MOD_SPRITES[nome .. ".png"] end,
+  }
+  for _, f in ipairs(candidatos) do
+    local ok, v = pcall(f)
+    if ok and type(v) == "table" then return v end
+  end
+  return nil
+end
+
+FOLHA     = achar_sprite("folha")       -- Sprites/folha.png
+FUNDO_OFF = achar_sprite("fundo_off")   -- Sprites/fundo_off.png
+FUNDO_ON  = achar_sprite("fundo_on")    -- Sprites/fundo_on.png
 FOLHA_COLS = 16                -- tiles por linha na folha.png
 
 SPR = {
@@ -458,6 +475,34 @@ local function desenhar_player(frame)
   ui.line(lx, y + 1, lx + p.dir * 2, y + 1, cor("lanterna"))
 end
 
+-- Se a folha não foi encontrada, lista as tabelas globais (para descobrir o nome)
+local function diagnostico_sprites()
+  if FOLHA then return end
+  local padrao = { ui=1, sfx=1, string=1, table=1, math=1, os=1, io=1,
+    coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
+    C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
+    inicio=1 }
+  local y = 20
+  ui.print("SPRITES NAO ENCONTRADOS. Tabelas globais:", 4, y, cor("vermelho"))
+  for nome, v in pairs(_G) do
+    if type(v) == "table" and not padrao[nome] then
+      local campos = {}
+      for k in pairs(v) do
+        campos[#campos + 1] = tostring(k)
+        if #campos >= 6 then break end
+      end
+      y = y + 10
+      ui.print(nome .. ": " .. table.concat(campos, ", "), 4, y, cor("branco"))
+    end
+  end
+  if type(MOD_SPRITES) == "table" then
+    local campos = {}
+    for k in pairs(MOD_SPRITES) do campos[#campos + 1] = tostring(k) end
+    y = y + 10
+    ui.print("require sprites: " .. table.concat(campos, ", "), 4, y, cor("branco"))
+  end
+end
+
 local function desenhar_hud()
   ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
   ui.print("ANDAR " .. andar_atual(player.y) .. "/7", 6, 3, cor("texto"))
@@ -473,22 +518,24 @@ end
 -- Loop principal (chamado por game.lua a cada frame)
 -- ------------------------------------------------------------
 function loop(frame)
-  for i = 1, #Palette do ui.palset(i - 1, Palette[i]) end
-  ui.cls(0)
-  local padrao = { ui=1, sfx=1, string=1, table=1, math=1, os=1, io=1,
-    coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
-    C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
-    inicio=1 }
-  local y = 4
-  for nome, v in pairs(_G) do
-    if type(v) == "table" and not padrao[nome] then
-      local campos = {}
-      for k in pairs(v) do
-        campos[#campos + 1] = tostring(k)
-        if #campos >= 6 then break end
-      end
-      ui.print(nome .. ": " .. table.concat(campos, ", "), 4, y, Palette.hex(0xFFFFFF))
-      y = y + 10
-    end
+  for i = 1, #Palette do
+    ui.palset(i - 1, Palette[i])
   end
+
+  mover_player()
+  interagir()
+  atualizar_camera()
+  if mensagem_t > 0 then mensagem_t = mensagem_t - 1 end
+
+  ui.clip(0, 0, TELA_L, TELA_A)
+  ui.cls(cor("ceu"))
+
+  ui.camera(0, math.floor(camera_y))
+  desenhar_cenario(frame)
+  desenhar_objetos(frame)
+  desenhar_player(frame)
+
+  ui.camera(0, 0)
+  desenhar_hud()
+  diagnostico_sprites()
 end
