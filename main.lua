@@ -15,7 +15,7 @@ require "mapa"
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.37"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.38"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -838,14 +838,18 @@ local function desenhar_checkpoints(frame)
   end
 end
 
+-- cápsula do TADALA (10x5): metade vermelha, metade branca
+function desenhar_pilula(x, y)
+  ui.circfill(x + 2, y + 2, 2, cor("vermelho"))
+  ui.rectfill(x + 2, y, x + 4, y + 4, cor("vermelho"))
+  ui.rectfill(x + 5, y, x + 6, y + 4, cor("branco"))
+  ui.circfill(x + 7, y + 2, 2, cor("branco"))
+end
+
 local function desenhar_comprimidos(frame)
   for _, cp in ipairs(comprimidos) do
     if not cp.pego then
-      local x, y = cp.x + 4, cp.y + 10 + ((frame // 20) % 2)
-      ui.circfill(x + 2, y + 2, 2, cor("vermelho"))
-      ui.rectfill(x + 2, y, x + 4, y + 4, cor("vermelho"))
-      ui.rectfill(x + 5, y, x + 6, y + 4, cor("branco"))
-      ui.circfill(x + 7, y + 2, 2, cor("branco"))
+      desenhar_pilula(cp.x + 4, cp.y + 10 + ((frame // 20) % 2))
     end
   end
 end
@@ -930,15 +934,14 @@ local function desenhar_hud()
   end
   ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 152, 3, cor("peca_l"))
   ui.print("SCORE " .. string.format("%06d", score), 228, 3, cor("janela_on"))
-  ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 326, 3,
-           energia and cor("verde") or cor("vermelho"))
-  ui.print("v" .. VERSAO, TELA_L - 36, 3, cor("estrela"))
+  -- TADALA: ícone da cápsula + segundos restantes (some quando acaba)
   if player.tadala > 0 then
     local seg = (player.tadala + 59) // 60
-    local txt = "TADALA ON  " .. seg
     local c = (player.tadala > 120 or (player.tadala // 8) % 2 == 0) and cor("branco") or cor("vermelho")
-    ui.print(txt, TELA_L / 2 - #txt * 3, 32, c)
+    desenhar_pilula(326, 4)
+    ui.print("TADALA ON " .. seg, 340, 3, c)
   end
+  ui.print("v" .. VERSAO, TELA_L - 36, 3, cor("estrela"))
   if mensagem and mensagem_t > 0 then
     ui.print(mensagem, TELA_L / 2 - #mensagem * 3, 250, cor("branco"))
   end
@@ -1007,7 +1010,7 @@ local function desenhar_menu(frame)
   else
     desenhar_opcoes(MENU_ITENS, 120, frame)
     if recorde > 0 then centro("RECORDE " .. string.format("%06d", recorde), 176, cor("peca_l")) end
-    centro("CIMA/BAIXO e Z para escolher", 208, cor("rebite"))
+    centro("CIMA/BAIXO e B para escolher", 208, cor("rebite"))
   end
 end
 
