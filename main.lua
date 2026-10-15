@@ -62,7 +62,7 @@ end
 --
 -- O Lupi expõe cada PNG do repositório pelo caminho da pasta:
 --   img/t/5.png       -> Sprites.img.t["5"]   (um PNG por tile)
---   img/fundo_off.png -> Sprites.img.fundo_off
+--   img/fundo_off/1.png -> Sprites.img.fundo_off["1"] (fundo em 4 pedaços)
 -- ui.spr desenha a imagem inteira. Se os PNGs não forem achados,
 -- o jogo usa os desenhos provisórios.
 -- ------------------------------------------------------------
@@ -78,9 +78,17 @@ local function sprite_tile(id)
   return r or nil
 end
 
+-- fundo dividido em 4 pedaços: img/<nome>/1.png .. 4.png
 local function sprite_img(nome)
-  local ok, v = pcall(function() return Sprites.img[nome] end)
-  if ok and type(v) == "table" then return v end
+  local ok, v = pcall(function()
+    local pasta = Sprites.img[nome]
+    local p = { pasta["1"], pasta["2"], pasta["3"], pasta["4"] }
+    for i = 1, 4 do
+      if type(p[i]) ~= "table" then return nil end
+    end
+    return { ["1"] = p[1], ["2"] = p[2], ["3"] = p[3], ["4"] = p[4] }
+  end)
+  if ok then return v end
   return nil
 end
 
@@ -90,11 +98,16 @@ local function desenha(id, x, y, flip_x)
   if r then ui.spr(r, x, y, flip_x or false, false) end
 end
 
+-- Chaves de teste: false desliga os sprites ou só o fundo da cidade
+USAR_SPRITES = true
+USAR_FUNDO   = true
+
 local function carregar_sprites()
   cache_tiles = {}
+  if not USAR_SPRITES then FOLHA = nil; FUNDO_OFF = nil; FUNDO_ON = nil; return end
   FOLHA     = sprite_tile(0) ~= nil       -- true = sprites disponíveis
-  FUNDO_OFF = sprite_img("fundo_off")
-  FUNDO_ON  = sprite_img("fundo_on")
+  FUNDO_OFF = USAR_FUNDO and sprite_img("fundo_off") or nil
+  FUNDO_ON  = USAR_FUNDO and sprite_img("fundo_on") or nil
   if not FOLHA then FOLHA = nil end
 end
 carregar_sprites()
@@ -361,7 +374,11 @@ local function desenhar_cenario(frame)
     -- cidade ao fundo (só aparece perto do telhado), com leve parallax
     if cam < ALTURA_ANDAR * TILE and FUNDO_OFF then
       local fy = cam // 2   -- topo da imagem no topo da fase
-      ui.spr(energia and FUNDO_ON or FUNDO_OFF, 0, fy, false, false)
+      local f = energia and FUNDO_ON or FUNDO_OFF
+      ui.spr(f["1"], 0,   fy,       false, false)
+      ui.spr(f["2"], 240, fy,       false, false)
+      ui.spr(f["3"], 0,   fy + 136, false, false)
+      ui.spr(f["4"], 240, fy + 136, false, false)
     end
     -- parede interna do prédio
     local id_fundo = energia and SPR.fundo_on or SPR.fundo
@@ -475,10 +492,40 @@ local function desenhar_player(frame)
   ui.line(lx, y + 1, lx + p.dir * 2, y + 1, cor("lanterna"))
 end
 
--- Aviso quando os PNGs não foram encontrados
+-- Diagnóstico: testa cada passo do caminho até os PNGs e mostra na tela
+local function testar(rotulo, f)
+  local ok, v = pcall(f)
+  if not ok then
+    local msg = tostring(v)
+    return rotulo .. " -> ERRO: " .. (msg:match(":%d+: (.*)$") or msg)
+  end
+  return rotulo .. " -> " .. type(v) .. (v ~= nil and (" " .. tostring(v)) or "")
+end
+
 local function diagnostico_sprites()
   if FOLHA then return end
-  ui.print("SPRITES NAO ENCONTRADOS: confira se existe img/t/0.png", 4, 20, cor("vermelho"))
+  local linhas = {
+    "SPRITES NAO ENCONTRADOS - diagnostico:",
+    testar("Sprites", function() return Sprites end),
+    testar("sprites", function() return sprites end),
+    testar("Sprites.db32", function() return Sprites.db32 end),
+    testar("Sprites.img", function() return Sprites.img end),
+    testar("Sprites.img.t", function() return Sprites.img.t end),
+    testar('Sprites.img.t["0"]', function() return Sprites.img.t["0"] end),
+    testar('Sprites.img.fundo_off["1"]', function() return Sprites.img.fundo_off["1"] end),
+    testar("package.loaded.sprites", function() return package.loaded.sprites end),
+  }
+  local mt = getmetatable(Sprites or {})
+  linhas[#linhas + 1] = "metatable de Sprites: " .. tostring(mt)
+  local n = 0
+  for k, v in pairs(Sprites or {}) do
+    n = n + 1
+    if n <= 8 then linhas[#linhas + 1] = "  chave: " .. tostring(k) .. " = " .. type(v) end
+  end
+  linhas[#linhas + 1] = "total de chaves em Sprites: " .. n
+  for i, txt in ipairs(linhas) do
+    ui.print(txt, 4, 14 + i * 10, i == 1 and cor("vermelho") or cor("branco"))
+  end
 end
 
 local function desenhar_hud()
@@ -496,7 +543,7 @@ end
 -- Loop principal (chamado por game.lua a cada frame)
 -- ------------------------------------------------------------
 function loop(frame)
-  if not FOLHA then carregar_sprites() end   -- caso o Lupi carregue depois
+  if not FOLHA and USAR_SPRITES then carregar_sprites() end   -- caso o Lupi carregue depois
   for i = 1, #Palette do
     ui.palset(i - 1, Palette[i])
   end
