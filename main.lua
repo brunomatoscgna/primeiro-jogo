@@ -535,6 +535,8 @@ local function desenhar_hud()
   ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
   ui.print("ANDAR " .. andar_atual(player.y) .. "/7", 6, 3, cor("texto"))
   ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 200, 3, cor("peca_l"))
+  local ok_fps, fps = pcall(ui.stat, 7)
+  if ok_fps and fps then ui.print("FPS " .. tostring(fps), 330, 3, cor("texto")) end
   ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 390, 3,
            energia and cor("verde") or cor("vermelho"))
   if mensagem and mensagem_t > 0 then
