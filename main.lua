@@ -15,7 +15,7 @@ require "mapa"
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.35"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.36"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -246,6 +246,24 @@ TADALA_FRAMES = 8 * 60        -- 8 segundos
 PONTOS = { skull = 100, ghost = 250, peca = 500, energia = 1000, fim = 2000, vida = 500 }
 score = 0
 venceu = false
+estado = "menu"      -- "menu" (tela inicial), "jogo" ou "fim" (tela de pontuação)
+tempo = 0            -- frames jogados (o relógio do topo)
+resultado = nil      -- calculado ao chegar ao topo
+recorde = 0          -- melhor pontuação desde que o console ligou
+opcao = 1            -- item escolhido no menu / na tela de pontuação
+
+-- Nota de desempenho: pontuação final = score + bônus de tempo
+-- (10 minutos de referência: cada segundo a menos vale 5 pontos)
+NOTAS = {
+  { letra = "S", minimo = 12000, titulo = "LENDA DO APOCALIPSE",
+    frase = { "Os fantasmas pediram autografo.", "O vovo da aula de sobrevivencia." } },
+  { letra = "A", minimo = 9500, titulo = "SOBREVIVENTE DE ELITE",
+    frase = { "As caveiras ainda falam de voce.", "Quase lendario. Quase." } },
+  { letra = "B", minimo = 7000, titulo = "BOM TRABALHO",
+    frase = { "Cidade acesa, vovo inteiro.", "Da pra melhorar o cardio." } },
+  { letra = "C", minimo = 0, titulo = "O IMPORTANTE E ESTAR VIVO",
+    frase = { "Chegou devagar e meio quebrado...", "...mas chegou. Isso conta!" } },
+}
 -- checkpoint = onde volta depois de um dano (início do andar atual)
 -- salvamento = onde recomeça sem vidas (último checkpoint de 5 em 5 andares)
 -- (guardam a posição dos pés, porque a altura muda com o TADALA)
@@ -402,6 +420,7 @@ local function jogo_novo()
   for _, cp in ipairs(comprimidos) do cp.pego = false end
   for _, c in ipairs(CHECKPOINTS) do c.ativo = false end
   p.pecas, score, energia, venceu = 0, 0, false, false
+  tempo, resultado, opcao = 0, nil, 1
   if elevador then elevador.y, elevador.subindo = elevador.y0, false end
   salvamento = { x = inicio.x, pe = inicio.y + ALTURA_VOVO, andar = 1 }
   recomecar()
@@ -581,7 +600,23 @@ local function mover_elevador()
     venceu = true
     score = score + PONTOS.fim + p.vida * PONTOS.vida
     mensagem_t = 0
+    -- tela de pontuação
+    local seg = tempo // 60
+    local bonus = math.max(0, 600 - seg) * 5
+    local total = score + bonus
+    local nota = NOTAS[#NOTAS]
+    for _, n in ipairs(NOTAS) do
+      if total >= n.minimo then nota = n; break end
+    end
+    resultado = { score = score, seg = seg, bonus = bonus, total = total,
+                  nota = nota, recorde = total > recorde }
+    recorde = math.max(recorde, total)
+    estado, opcao = "fim", 1
   end
+end
+
+local function relogio(seg)
+  return string.format("%02d:%02d", seg // 60, seg % 60)
 end
 
 -- ------------------------------------------------------------
@@ -850,7 +885,8 @@ local function diagnostico_sprites()
     coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
     C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
     inicio=1, inimigos=1, ANIM=1, comprimidos=1, elevador=1, CHECKPOINTS=1,
-    checkpoint=1, salvamento=1, PONTOS=1 }
+    checkpoint=1, salvamento=1, PONTOS=1, NOTAS=1, resultado=1, MENU_ITENS=1,
+    FIM_ITENS=1 }
   local y = 20
   ui.print("SPRITES NAO ENCONTRADOS. Tabelas globais:", 4, y, cor("vermelho"))
   for nome, v in pairs(_G) do
@@ -882,7 +918,10 @@ function desenhar_coracao(x, y, c)
 end
 
 local function desenhar_hud()
-  ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
+  ui.rectfill(0, 0, TELA_L - 1, 25, cor("ceu"))
+  ui.line(0, 25, TELA_L - 1, 25, cor("fundo_on"))
+  local t = "TEMPO " .. relogio(tempo // 60)
+  ui.print(t, TELA_L / 2 - #t * 3, 15, cor("branco"))
   ui.print("ANDAR " .. andar_atual(player.y) .. "/" .. ANDARES, 4, 3, cor("texto"))
   -- vida em corações
   ui.print("VIDA", 78, 3, cor("texto"))
@@ -898,20 +937,119 @@ local function desenhar_hud()
     local seg = (player.tadala + 59) // 60
     local txt = "TADALA ON  " .. seg
     local c = (player.tadala > 120 or (player.tadala // 8) % 2 == 0) and cor("branco") or cor("vermelho")
-    ui.print(txt, TELA_L / 2 - #txt * 3, 22, c)
+    ui.print(txt, TELA_L / 2 - #txt * 3, 32, c)
   end
   if mensagem and mensagem_t > 0 then
     ui.print(mensagem, TELA_L / 2 - #mensagem * 3, 250, cor("branco"))
   end
-  if venceu then
-    ui.rectfill(110, 90, 370, 170, cor("ceu"))
-    ui.rect(110, 90, 370, 170, cor("janela_on"))
-    local linhas = { "VOCE RELIGOU A CIDADE!", "SCORE " .. string.format("%06d", score),
-                     "Z para jogar de novo" }
-    for i, t in ipairs(linhas) do
-      ui.print(t, TELA_L / 2 - #t * 3, 100 + i * 16, i == 2 and cor("janela_on") or cor("branco"))
-    end
+end
+
+-- ------------------------------------------------------------
+-- Telas: menu principal e pontuação final (por cima da cidade)
+-- ------------------------------------------------------------
+local function centro(t, y, c)
+  ui.print(t, TELA_L // 2 - #t * 3, y, c)
+end
+
+-- painel no estilo do prédio: fundo escuro, borda dupla e rebites
+local function painel(x0, y0, x1, y1)
+  ui.rectfill(x0, y0, x1, y1, cor("ceu"))
+  ui.rect(x0, y0, x1, y1, cor("viga"))
+  ui.rect(x0 + 2, y0 + 2, x1 - 2, y1 - 2, cor("janela_on"))
+  for _, x in ipairs({ x0 + 5, x1 - 5 }) do
+    for _, y in ipairs({ y0 + 5, y1 - 5 }) do ui.circfill(x, y, 1, cor("rebite")) end
   end
+end
+
+local function desenhar_opcoes(itens, y, frame)
+  for i, t in ipairs(itens) do
+    local escolhido = i == opcao
+    local txt = escolhido and ("> " .. t .. " <") or t
+    local c = escolhido and (((frame // 15) % 2 == 0) and cor("janela_on") or cor("branco"))
+              or cor("rebite")
+    centro(txt, y + (i - 1) * 14, c)
+  end
+end
+
+local function escolher(n)
+  if ui.btnp(UP) then opcao = (opcao - 2) % n + 1 end
+  if ui.btnp(DOWN) then opcao = opcao % n + 1 end
+  return ui.btnp(BTN_Z)
+end
+
+MENU_ITENS = { "JOGAR", "COMO JOGAR" }
+local ajuda = false
+
+local function tela_menu(frame)
+  if ajuda then
+    if ui.btnp(BTN_Z) then ajuda = false end
+  elseif escolher(#MENU_ITENS) then
+    if opcao == 1 then jogo_novo(); estado = "jogo" else ajuda = true end
+  end
+end
+
+local function desenhar_menu(frame)
+  painel(100, 40, 380, 230)
+  centro("FIM DOS TEMPOS", 56, cor("janela_on"))
+  centro("A cidade apagou. So o vovo pode religar.", 74, cor("texto"))
+  if ajuda then
+    local linhas = {
+      "SETAS: andar   Z ou CIMA: pular",
+      "CIMA/BAIXO na escada: subir e descer",
+      "Pegue as 5 pecas e religue o gerador",
+      "no subsolo. Depois, elevador ao topo!",
+      "Comprimido: vira samurai por 8 seg.",
+      "Dois seguidos? O coracao nao aguenta.",
+    }
+    for i, t in ipairs(linhas) do centro(t, 96 + (i - 1) * 14, cor("branco")) end
+    centro("Z: voltar", 208, cor("rebite"))
+  else
+    desenhar_opcoes(MENU_ITENS, 120, frame)
+    if recorde > 0 then centro("RECORDE " .. string.format("%06d", recorde), 176, cor("peca_l")) end
+    centro("CIMA/BAIXO e Z para escolher", 208, cor("rebite"))
+  end
+end
+
+FIM_ITENS = { "JOGAR NOVAMENTE", "MENU PRINCIPAL" }
+
+local function tela_fim(frame)
+  if escolher(#FIM_ITENS) then
+    local escolha = opcao
+    jogo_novo()
+    estado = escolha == 1 and "jogo" or "menu"
+  end
+end
+
+local function desenhar_fim(frame)
+  local r = resultado
+  painel(70, 20, 410, 256)
+  centro("VOCE RELIGOU A CIDADE!", 32, cor("janela_on"))
+  local linhas = {
+    { "PONTOS",         string.format("%06d", r.score) },
+    { "TEMPO",          relogio(r.seg) },
+    { "BONUS DE TEMPO", "+" .. string.format("%05d", r.bonus) },
+    { "TOTAL",          string.format("%06d", r.total) },
+  }
+  for i, l in ipairs(linhas) do
+    local y = 52 + (i - 1) * 12
+    local c = i == 4 and cor("janela_on") or cor("texto")
+    ui.print(l[1], 110, y, c)
+    ui.print(l[2], 370 - #l[2] * 6, y, c)
+  end
+  ui.line(110, 87, 370, 87, cor("viga"))
+  -- nota grande: letra num quadro piscando
+  local n = r.nota
+  local cn = ({ S = "janela_on", A = "verde", B = "faisca", C = "tijolo_l" })[n.letra]
+  ui.rectfill(220, 106, 260, 146, cor("fundo"))
+  ui.rect(220, 106, 260, 146, (frame // 20) % 2 == 0 and cor(cn) or cor("branco"))
+  for dx = 0, 1 do for dy = 0, 1 do                -- letra "grossa"
+    ui.print(n.letra, 237 + dx, 122 + dy, cor(cn))
+  end end
+  centro("NOTA " .. n.letra .. ": " .. n.titulo, 98, cor(cn))
+  centro(n.frase[1], 156, cor("branco"))
+  centro(n.frase[2], 168, cor("branco"))
+  if r.recorde then centro("NOVO RECORDE!", 184, (frame // 10) % 2 == 0 and cor("peca_l") or cor("verde")) end
+  desenhar_opcoes(FIM_ITENS, 204, frame)
 end
 
 -- ------------------------------------------------------------
@@ -922,11 +1060,14 @@ function loop(frame)
     ui.palset(i - 1, Palette[i])
   end
 
-  if venceu then
-    if ui.btnp(BTN_Z) then jogo_novo() end
+  if estado == "menu" then
+    tela_menu(frame)
+  elseif estado == "fim" then
+    tela_fim(frame)
   elseif elevador and elevador.subindo then
     mover_elevador()
   else
+    tempo = tempo + 1
     mover_player()
     interagir()
   end
@@ -947,6 +1088,12 @@ function loop(frame)
   desenhar_elevador(frame)
 
   ui.camera(0, 0)
-  desenhar_hud()
+  if estado == "menu" then
+    desenhar_menu(frame)
+  elseif estado == "fim" then
+    desenhar_fim(frame)
+  else
+    desenhar_hud()
+  end
   diagnostico_sprites()
 end
