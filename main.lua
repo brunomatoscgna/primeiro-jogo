@@ -58,6 +58,77 @@ local function solido_px(x, y)
 end
 
 -- ------------------------------------------------------------
+-- SPRITES — pack "Cyberpunk Tileset 16x16" (itch.io), convertido p/ DB32
+--   folha.png    : todos os tiles do jogo (ids abaixo)
+--   fundo_off.png: cidade apagada | fundo_on.png: cidade acesa
+--
+-- >>> AJUSTE AQUI: aponte para as referências de sprite do Lupi. <<<
+-- Enquanto FOLHA for nil, o jogo usa os desenhos provisórios.
+-- ------------------------------------------------------------
+FOLHA     = "folha.png"
+FUNDO_OFF = "fundo_off.png"
+FUNDO_ON  = "fundo_on.png"
+FOLHA_COLS = 16                -- tiles por linha na folha.png
+
+SPR = {
+  parede_solta = 9,                          -- 0..8 = parede 3x3 (9-slice)
+  barra_e = 10, barra_m = 11, barra_d = 12,  -- parede de 1 bloco de altura
+  viga_e = 13, viga_m = 14, viga_d = 15, viga_solta = 31,
+  fundo = 16, fundo_on = 24,
+  janela = 17, janela_on = 19,               -- +16 = parte de baixo
+  peca = 21,
+  gerador = 22,                              -- +1 = parte de baixo
+  raio = 25,                                 -- 2x3 tiles: 25..30
+}
+
+-- Escolhe o tile de cada bloco pelos vizinhos (auto-tile), uma vez só.
+local function vizinhos(col, lin, igual)
+  return igual(bloco(col, lin - 1)), igual(bloco(col, lin + 1)),
+         igual(bloco(col - 1, lin)), igual(bloco(col + 1, lin))
+end
+
+local function tile_parede(col, lin)
+  local cima, baixo, esq, dir = vizinhos(col, lin, function(c) return c == "#" end)
+  if not cima and not baixo then                      -- piso fino
+    if not esq and not dir then return SPR.parede_solta end
+    if not esq then return SPR.barra_e end
+    if not dir then return SPR.barra_d end
+    return SPR.barra_m
+  end
+  if not esq and not dir then return SPR.parede_solta end -- coluna fina
+  local l = (not cima) and 0 or ((not baixo) and 2 or 1)
+  local c = (not esq) and 0 or ((not dir) and 2 or 1)
+  return l * 3 + c
+end
+
+local function tile_viga(col, lin)
+  local _, _, esq, dir = vizinhos(col, lin, function(c) return c == "=" end)
+  if not esq and not dir then return SPR.viga_solta end
+  if not esq then return SPR.viga_e end
+  if not dir then return SPR.viga_d end
+  return SPR.viga_m
+end
+
+AUTOTILE = {}
+for lin = 0, MAPA_A - 1 do
+  AUTOTILE[lin] = {}
+  for col = 0, MAPA_L - 1 do
+    local c = bloco(col, lin)
+    if c == "#" then AUTOTILE[lin][col] = tile_parede(col, lin)
+    elseif c == "=" then AUTOTILE[lin][col] = tile_viga(col, lin) end
+  end
+end
+
+-- Desenha uma imagem grande (ex.: fundo 480x272) tile a tile.
+local function desenhar_imagem(ref, x, y, cols, lins)
+  for ty = 0, lins - 1 do
+    for tx = 0, cols - 1 do
+      ui.tile(ref, ty * cols + tx, x + tx * TILE, y + ty * TILE)
+    end
+  end
+end
+
+-- ------------------------------------------------------------
 -- Estado do jogo
 -- ------------------------------------------------------------
 pecas = {}           -- peças ainda no mapa
@@ -214,6 +285,20 @@ end
 -- Desenho do cenário
 -- ------------------------------------------------------------
 local function desenhar_bloco(c, x, y, frame)
+  if FOLHA then
+    local col, lin = x // TILE, y // TILE
+    if c == "#" or c == "=" then
+      ui.tile(FOLHA, AUTOTILE[lin][col], x, y)
+      return
+    elseif c == "w" then
+      local id = energia and SPR.janela_on or SPR.janela
+      ui.tile(FOLHA, id, x, y)
+      ui.tile(FOLHA, id + FOLHA_COLS, x, y + TILE)
+      return
+    end
+    -- "^" (faíscas) ainda sem sprite: cai no desenho provisório abaixo
+  end
+
   if c == "#" then
     ui.rectfill(x, y, x + 15, y + 15, cor("tijolo"))
     ui.line(x, y, x + 15, y, cor("tijolo_l"))
@@ -250,6 +335,28 @@ local function desenhar_cenario(frame)
   local cam = math.floor(camera_y)
   local lin_ini = math.max(0, cam // TILE)
   local lin_fim = math.min(MAPA_A - 1, (cam + TELA_A) // TILE + 1)
+
+  if FOLHA then
+    -- cidade ao fundo (só aparece perto do telhado), com leve parallax
+    if cam < ALTURA_ANDAR * TILE and FUNDO_OFF then
+      local fy = cam // 2   -- topo da imagem no topo da fase
+      desenhar_imagem(energia and FUNDO_ON or FUNDO_OFF, 0, fy, 30, 17)
+    end
+    -- parede interna do prédio
+    local id_fundo = energia and SPR.fundo_on or SPR.fundo
+    for lin = math.max(lin_ini, ALTURA_ANDAR), lin_fim do
+      for col = 0, MAPA_L - 1 do
+        ui.tile(FOLHA, id_fundo, col * TILE, lin * TILE)
+      end
+    end
+    for lin = lin_ini, lin_fim do
+      for col = 0, MAPA_L - 1 do
+        local c = bloco(col, lin)
+        if c ~= " " then desenhar_bloco(c, col * TILE, lin * TILE, frame) end
+      end
+    end
+    return
+  end
 
   -- céu com estrelas (só aparece no topo)
   for i = 0, 40 do
@@ -290,6 +397,29 @@ local function desenhar_cenario(frame)
 end
 
 local function desenhar_objetos(frame)
+  if FOLHA then
+    -- peças: turbina flutuando
+    for _, pc in ipairs(pecas) do
+      if not pc.pega then
+        ui.tile(FOLHA, SPR.peca, pc.x, pc.y + ((frame // 15) % 2) * 2 - 1)
+      end
+    end
+    if gerador then
+      local g = gerador
+      ui.tile(FOLHA, SPR.gerador, g.x, g.y - TILE)
+      ui.tile(FOLHA, SPR.gerador + FOLHA_COLS, g.x, g.y)
+      -- raio de neon: aceso com energia; sem energia, só "falha" de vez em quando
+      if energia or frame % 120 < 5 then
+        for ty = 0, 2 do
+          for tx = 0, 1 do
+            ui.tile(FOLHA, SPR.raio + ty * 2 + tx, g.x + 24 + tx * TILE, g.y - 2 * TILE + ty * TILE)
+          end
+        end
+      end
+    end
+    return
+  end
+
   -- peças (bateria piscando e flutuando)
   for _, pc in ipairs(pecas) do
     if not pc.pega then
