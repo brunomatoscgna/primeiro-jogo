@@ -10,7 +10,7 @@ require "mapa"
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.30"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.31"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -166,7 +166,9 @@ player = {
   x = inicio.x, y = inicio.y, w = 10, h = 14,
   vx = 0, vy = 0, no_chao = false, dir = 1,
   pecas = 0,
+  vida = 3, invencivel = 0,   -- invencivel: frames piscando após um choque
 }
+VIDA_MAX = 3
 checkpoint = { x = inicio.x, y = inicio.y }
 camera_y = 0
 energia = false
@@ -245,6 +247,29 @@ end
 
 local ultimo_andar = 1
 
+-- Sem vida: recomeça do telhado, com as peças de volta no lugar
+local function recomecar()
+  local p = player
+  p.x, p.y, p.vx, p.vy = inicio.x, inicio.y, 0, 0
+  p.vida, p.pecas = VIDA_MAX, 0
+  for _, pc in ipairs(pecas) do pc.pega = false end
+  checkpoint = { x = inicio.x, y = inicio.y }
+  ultimo_andar = 1
+end
+
+local function levar_choque()
+  local p = player
+  p.vida = p.vida - 1
+  if p.vida <= 0 then
+    recomecar()
+    avisar("SEM VIDA! Recomecando do telhado.", 150)
+  else
+    p.x, p.y, p.vx, p.vy = checkpoint.x, checkpoint.y, 0, 0
+    avisar("CHOQUE! Cuidado com os fios.", 90)
+  end
+  p.invencivel = 60
+end
+
 local function interagir()
   local p = player
 
@@ -264,14 +289,15 @@ local function interagir()
     end
   end
 
-  -- faíscas: volta ao checkpoint
+  -- faíscas: tira 1 de vida e volta ao checkpoint
   -- só a parte de baixo do bloco "^" dá choque (onde estão os fios)
+  if p.invencivel > 0 then p.invencivel = p.invencivel - 1 end
   local pe = math.floor(p.y + p.h - 1)
   local cx1, cx2 = p.x // TILE, (p.x + p.w - 1) // TILE
   for col = cx1, cx2 do
-    if bloco(col, pe // TILE) == "^" and pe % TILE >= 11 and not energia then
-      p.x, p.y, p.vx, p.vy = checkpoint.x, checkpoint.y, 0, 0
-      avisar("CHOQUE! Cuidado com os fios.", 90)
+    if bloco(col, pe // TILE) == "^" and pe % TILE >= 11 and not energia
+       and p.invencivel == 0 then
+      levar_choque()
       return
     end
   end
@@ -461,6 +487,7 @@ end
 
 local function desenhar_player(frame)
   local p = player
+  if p.invencivel > 0 and (frame // 4) % 2 == 0 then return end  -- pisca
   local x, y = math.floor(p.x), math.floor(p.y)
   ui.rectfill(x, y + 4, x + p.w - 1, y + p.h - 1, cor("player"))
   ui.rectfill(x + 1, y, x + p.w - 2, y + 4, cor("pele"))
@@ -500,6 +527,12 @@ end
 local function desenhar_hud()
   ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
   ui.print("ANDAR " .. andar_atual(player.y) .. "/7", 6, 3, cor("texto"))
+  -- barra de vida
+  ui.print("VIDA", 100, 3, cor("texto"))
+  for i = 1, VIDA_MAX do
+    local x = 120 + (i - 1) * 14
+    ui.rectfill(x, 3, x + 11, 9, i <= player.vida and cor("vermelho") or cor("viga"))
+  end
   ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 200, 3, cor("peca_l"))
   ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 390, 3,
            energia and cor("verde") or cor("vermelho"))
