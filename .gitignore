@@ -39,3 +39,6 @@ luac.out
 *.x86_64
 *.hex
 
+
+# GIFs originais dos personagens (o jogo usa os PNGs convertidos)
+Sprites/Characters/

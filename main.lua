@@ -4,13 +4,14 @@ require "mapa"
 
 -- ============================================================
 -- FALHA NO SISTEMA — cidade vertical sem energia
--- Desça o prédio, pegue as 3 peças e religue o gerador.
--- Setas: andar | Z ou CIMA: pular
+-- Desça os 20 andares, pegue as peças e religue o gerador.
+-- Setas: andar | Z ou CIMA: pular | CIMA/BAIXO na escada: subir/descer
+-- Desvie das caveiras e dos fantasmas.
 -- ============================================================
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.31"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.32"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -58,6 +59,11 @@ local function solido_px(x, y)
   return solido(bloco(x // TILE, y // TILE))
 end
 
+-- topo de escada: dá para ficar em pé em cima (como uma plataforma)
+local function topo_escada(col, lin)
+  return bloco(col, lin) == "H" and bloco(col, lin - 1) ~= "H"
+end
+
 -- ------------------------------------------------------------
 -- SPRITES — pack "Cyberpunk Tileset 16x16" (itch.io), convertido p/ DB32
 --   folha.png    : todos os tiles do jogo (ids abaixo)
@@ -92,6 +98,27 @@ FOLHA     = achar_sprite("folha")       -- Sprites/folha.png
 FUNDO_OFF = achar_sprite("fundo_off")   -- Sprites/fundo_off.png
 FUNDO_ON  = achar_sprite("fundo_on")    -- Sprites/fundo_on.png
 FOLHA_COLS = 16                -- tiles por linha na folha.png
+
+-- Personagens (GIFs de Sprites/Characters convertidos p/ PNG, 4 quadros cada):
+--   Sprites/grandpa_walk/1.png -> Sprites.Sprites.grandpa_walk["1"]
+local function quadros(nome)
+  local ok, q = pcall(function()
+    local pasta, q = Sprites.Sprites[nome], {}
+    for i = 1, 4 do
+      q[i] = pasta[tostring(i)]
+      if type(q[i]) ~= "table" then return nil end
+    end
+    return q
+  end)
+  if ok then return q end
+  return nil
+end
+
+ANIM = {
+  grandpa = { parado = quadros("grandpa_idle"), andando = quadros("grandpa_walk") },
+  skull   = { parado = quadros("skull_idle"),   andando = quadros("skull_walk") },
+  ghost   = { parado = quadros("ghost_idle"),   andando = quadros("ghost_walk") },
+}
 
 SPR = {
   parede_solta = 9,                          -- 0..8 = parede 3x3 (9-slice)
@@ -149,6 +176,7 @@ end
 pecas = {}           -- peças ainda no mapa
 gerador = nil
 inicio = { x = 32, y = 32 }
+inimigos = {}
 
 for lin = 1, MAPA_A do
   for col = 1, MAPA_L do
@@ -157,14 +185,24 @@ for lin = 1, MAPA_A do
     if c == "P" then table.insert(pecas, { x = x, y = y, pega = false }) end
     if c == "G" then gerador = { x = x, y = y } end
     if c == "S" then inicio = { x = x, y = y } end
+    if c == "K" then   -- caveira: anda no chão e vira nas paredes/beiradas
+      table.insert(inimigos, { tipo = "skull", x = x + 2, y = y + TILE - 16,
+                               w = 11, h = 16, vx = 0.5 })
+    end
+    if c == "F" then   -- fantasma: atravessa tudo, vai e volta flutuando
+      table.insert(inimigos, { tipo = "ghost", x = x, y = y, base_y = y,
+                               w = 14, h = 16, vx = 0.7, fase = col })
+    end
   end
 end
+ANDARES = MAPA_A // ALTURA_ANDAR
 
 TOTAL_PECAS = #pecas
 
 player = {
-  x = inicio.x, y = inicio.y, w = 10, h = 14,
+  x = inicio.x, y = inicio.y, w = 10, h = 15,   -- cabe embaixo de uma viga
   vx = 0, vy = 0, no_chao = false, dir = 1,
+  escada = false,             -- true enquanto está pendurado na escada
   pecas = 0,
   vida = 3, invencivel = 0,   -- invencivel: frames piscando após um choque
 }
@@ -179,6 +217,7 @@ GRAVIDADE  = 0.35
 PULO       = -5.6
 VEL        = 2.2
 VEL_QUEDA  = 7
+VEL_ESCADA = 1.6
 
 local function avisar(txt, frames)
   mensagem, mensagem_t = txt, frames or 120
@@ -193,18 +232,46 @@ local function colide_em(x, y, w, h)
       or solido_px(x, y + h // 2) or solido_px(x + w - 1, y + h // 2)
 end
 
+-- corpo encostando numa escada (coluna do meio do jogador)
+local function na_escada(p)
+  local col = (p.x + p.w / 2) // TILE
+  for lin = p.y // TILE, (p.y + p.h - 1) // TILE do
+    if bloco(col, lin) == "H" then return true end
+  end
+  return false
+end
+
+-- pés exatamente em cima do topo de uma escada
+local function sobre_escada(p)
+  local pe = p.y + p.h
+  if math.abs(pe - math.floor(pe / TILE + 0.5) * TILE) > 0.01 then return false end
+  local lin = math.floor(pe / TILE + 0.5)
+  return topo_escada(p.x // TILE, lin) or topo_escada((p.x + p.w - 1) // TILE, lin)
+end
+
 local function mover_player()
   local p = player
+  local cima, baixo = ui.btn(UP), ui.btn(DOWN)
 
   p.vx = 0
   if ui.btn(LEFT)  then p.vx = -VEL; p.dir = -1 end
   if ui.btn(RIGHT) then p.vx =  VEL; p.dir =  1 end
 
-  if p.no_chao and (ui.btnp(BTN_Z) or ui.btnp(UP)) then
-    p.vy = PULO
+  -- agarrar a escada: CIMA encostado nela, ou BAIXO em cima dela
+  if not p.escada and p.vx == 0 and
+     ((cima and na_escada(p)) or (baixo and (sobre_escada(p) or (na_escada(p) and not p.no_chao)))) then
+    p.escada = true
+    p.x = ((p.x + p.w / 2) // TILE) * TILE + (TILE - p.w) / 2   -- centraliza
   end
 
-  if not p.no_chao then p.vy = math.min(p.vy + GRAVIDADE, VEL_QUEDA) end
+  if p.escada then
+    p.vy = cima and -VEL_ESCADA or (baixo and VEL_ESCADA or 0)
+    if p.vx ~= 0 then p.escada = false end            -- solta para o lado
+    if ui.btnp(BTN_Z) then p.escada = false; p.vy = PULO end
+  else
+    if p.no_chao and (ui.btnp(BTN_Z) or ui.btnp(UP)) then p.vy = PULO end
+    if not p.no_chao then p.vy = math.min(p.vy + GRAVIDADE, VEL_QUEDA) end
+  end
 
   -- eixo X: se bater, encosta exatamente na borda do bloco
   local nx = p.x + p.vx
@@ -226,16 +293,28 @@ local function mover_player()
       ny = (math.floor(ny) // TILE + 1) * TILE
     end
     p.vy = 0
+  elseif not p.escada and p.vy > 0 then
+    -- caindo: o topo da escada segura como uma plataforma
+    local antes, depois = p.y + p.h, ny + p.h
+    local lin = math.floor(depois / TILE)
+    local t = lin * TILE
+    if antes <= t and depois > t and
+       (topo_escada(p.x // TILE, lin) or topo_escada((p.x + p.w - 1) // TILE, lin)) then
+      ny, p.vy = t - p.h, 0
+    end
   end
   p.y = ny
 
+  -- saiu da escada (chegou no topo ou no fim)
+  if p.escada and not na_escada(p) then p.escada = false end
+
   -- está no chão se houver algo sólido logo abaixo dos pés
-  p.no_chao = colide_em(p.x, p.y + 1, p.w, p.h)
+  p.no_chao = colide_em(p.x, p.y + 1, p.w, p.h) or sobre_escada(p)
   if p.no_chao and p.vy > 0 then p.vy = 0 end
 end
 
 local function andar_atual(y)
-  return math.min(7, math.floor((y + player.h) / (ALTURA_ANDAR * TILE)) + 1)
+  return math.min(ANDARES, math.floor((y + player.h - 1) / (ALTURA_ANDAR * TILE)) + 1)
 end
 
 -- ------------------------------------------------------------
@@ -251,31 +330,51 @@ local ultimo_andar = 1
 local function recomecar()
   local p = player
   p.x, p.y, p.vx, p.vy = inicio.x, inicio.y, 0, 0
-  p.vida, p.pecas = VIDA_MAX, 0
+  p.vida, p.pecas, p.escada = VIDA_MAX, 0, false
   for _, pc in ipairs(pecas) do pc.pega = false end
   checkpoint = { x = inicio.x, y = inicio.y }
   ultimo_andar = 1
 end
 
-local function levar_choque()
+-- tira 1 de vida e volta ao checkpoint (início do andar)
+local function levar_dano(texto)
   local p = player
   p.vida = p.vida - 1
+  p.escada = false
   if p.vida <= 0 then
     recomecar()
     avisar("SEM VIDA! Recomecando do telhado.", 150)
   else
     p.x, p.y, p.vx, p.vy = checkpoint.x, checkpoint.y, 0, 0
-    avisar("CHOQUE! Cuidado com os fios.", 90)
+    avisar(texto, 90)
   end
   p.invencivel = 60
+end
+
+-- caveiras andam e viram; fantasmas flutuam de parede a parede
+local function mover_inimigos(frame)
+  for _, e in ipairs(inimigos) do
+    if e.tipo == "skull" then
+      local nx = e.x + e.vx
+      local fx = e.vx > 0 and (nx + e.w) or (nx - 1)       -- ponto da frente
+      local col, lin_pe = fx // TILE, (e.y + e.h) // TILE
+      local tem_chao = solido(bloco(col, lin_pe)) or bloco(col, lin_pe) == "H"
+      local barreira = solido_px(fx, e.y + e.h - 1) or bloco(col, lin_pe - 1) == "^"
+      if barreira or not tem_chao then e.vx = -e.vx else e.x = nx end
+    else
+      e.x = e.x + e.vx
+      if e.x < TILE or e.x + e.w > (MAPA_L - 1) * TILE then e.vx = -e.vx end
+      e.y = e.base_y + math.sin(frame * 0.04 + e.fase) * 20
+    end
+  end
 end
 
 local function interagir()
   local p = player
 
-  -- novo andar alcançado = novo checkpoint
+  -- mudou de andar (descendo ou subindo) = novo checkpoint
   local a = andar_atual(p.y)
-  if p.no_chao and a > ultimo_andar then
+  if p.no_chao and not p.escada and a ~= ultimo_andar then
     ultimo_andar = a
     checkpoint = { x = p.x, y = p.y }
   end
@@ -297,8 +396,18 @@ local function interagir()
   for col = cx1, cx2 do
     if bloco(col, pe // TILE) == "^" and pe % TILE >= 11 and not energia
        and p.invencivel == 0 then
-      levar_choque()
+      levar_dano("CHOQUE! Cuidado com os fios.")
       return
+    end
+  end
+
+  -- inimigos (a caixa de toque é um pouco menor que o desenho)
+  if p.invencivel == 0 then
+    for _, e in ipairs(inimigos) do
+      if toca(p, e.x + 2, e.y + 2, e.w - 4, e.h - 4) then
+        levar_dano(e.tipo == "skull" and "Uma caveira te pegou!" or "Um fantasma te assustou!")
+        return
+      end
     end
   end
 
@@ -326,6 +435,13 @@ end
 -- Desenho do cenário
 -- ------------------------------------------------------------
 local function desenhar_bloco(c, x, y, frame)
+  if c == "H" then
+    ui.rectfill(x + 2, y, x + 3, y + 15, cor("rebite"))
+    ui.rectfill(x + 12, y, x + 13, y + 15, cor("rebite"))
+    ui.line(x + 4, y + 3, x + 11, y + 3, cor("viga"))
+    ui.line(x + 4, y + 11, x + 11, y + 11, cor("viga"))
+    return
+  end
   if FOLHA then
     local col, lin = x // TILE, y // TILE
     if c == "#" or c == "=" then
@@ -485,15 +601,37 @@ local function desenhar_objetos(frame)
   end
 end
 
+-- desenha um personagem pelos pés, centralizado na caixa de colisão
+local function desenhar_boneco(anim, movendo, frame, x, y, w, h, virado)
+  local q = anim and (movendo and anim.andando or anim.parado)
+  if not q then return false end
+  local i = (frame // 8) % 4 + 1
+  ui.spr(q[i], math.floor(x + w / 2 - 8), math.floor(y + h - 20), virado, false)
+  return true
+end
+
+local function desenhar_inimigos(frame)
+  local cam = math.floor(camera_y)
+  for _, e in ipairs(inimigos) do
+    if e.y + e.h > cam and e.y < cam + TELA_A then
+      if not desenhar_boneco(ANIM[e.tipo], true, frame, e.x, e.y, e.w, e.h, e.vx < 0) then
+        ui.rectfill(e.x, e.y, e.x + e.w - 1, e.y + e.h - 1,
+                    e.tipo == "skull" and cor("branco") or cor("estrela"))
+      end
+    end
+  end
+end
+
 local function desenhar_player(frame)
   local p = player
   if p.invencivel > 0 and (frame // 4) % 2 == 0 then return end  -- pisca
+  local movendo = p.vx ~= 0 or (p.escada and p.vy ~= 0) or not p.no_chao
+  if desenhar_boneco(ANIM.grandpa, movendo, frame, p.x, p.y, p.w, p.h, p.dir < 0) then
+    return
+  end
   local x, y = math.floor(p.x), math.floor(p.y)
   ui.rectfill(x, y + 4, x + p.w - 1, y + p.h - 1, cor("player"))
   ui.rectfill(x + 1, y, x + p.w - 2, y + 4, cor("pele"))
-  -- lanterna do capacete
-  local lx = p.dir > 0 and (x + p.w) or (x - 1)
-  ui.line(lx, y + 1, lx + p.dir * 2, y + 1, cor("lanterna"))
 end
 
 -- Se a folha não foi encontrada, lista as tabelas globais (para descobrir o nome)
@@ -502,7 +640,7 @@ local function diagnostico_sprites()
   local padrao = { ui=1, sfx=1, string=1, table=1, math=1, os=1, io=1,
     coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
     C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
-    inicio=1 }
+    inicio=1, inimigos=1, ANIM=1 }
   local y = 20
   ui.print("SPRITES NAO ENCONTRADOS. Tabelas globais:", 4, y, cor("vermelho"))
   for nome, v in pairs(_G) do
@@ -526,7 +664,7 @@ end
 
 local function desenhar_hud()
   ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
-  ui.print("ANDAR " .. andar_atual(player.y) .. "/7", 6, 3, cor("texto"))
+  ui.print("ANDAR " .. andar_atual(player.y) .. "/" .. ANDARES, 6, 3, cor("texto"))
   -- barra de vida
   ui.print("VIDA", 100, 3, cor("texto"))
   for i = 1, VIDA_MAX do
@@ -551,6 +689,7 @@ function loop(frame)
   end
 
   mover_player()
+  mover_inimigos(frame)
   interagir()
   atualizar_camera()
   if mensagem_t > 0 then mensagem_t = mensagem_t - 1 end
@@ -561,6 +700,7 @@ function loop(frame)
   ui.camera(0, math.floor(camera_y))
   desenhar_cenario(frame)
   desenhar_objetos(frame)
+  desenhar_inimigos(frame)
   desenhar_player(frame)
 
   ui.camera(0, 0)
