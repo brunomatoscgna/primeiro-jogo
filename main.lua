@@ -12,5 +12,5 @@ function loop(frame)
     ui.camera(0,0)
     ui.cls(Palette.hex(0x45283c))
     
-    ui.print("Oi, Lupi!", 32, 32, Palette.hex(0xFFFFFF))
+    ui.print("O Fim do mundo começou de novo ", 32, 32, Palette.hex(0xFFFFFF))
 end 
