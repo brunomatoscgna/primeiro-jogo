@@ -473,23 +473,22 @@ end
 -- Loop principal (chamado por game.lua a cada frame)
 -- ------------------------------------------------------------
 function loop(frame)
-  for i = 1, #Palette do
-    ui.palset(i - 1, Palette[i])
+  for i = 1, #Palette do ui.palset(i - 1, Palette[i]) end
+  ui.cls(0)
+  local padrao = { ui=1, sfx=1, string=1, table=1, math=1, os=1, io=1,
+    coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
+    C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
+    inicio=1 }
+  local y = 4
+  for nome, v in pairs(_G) do
+    if type(v) == "table" and not padrao[nome] then
+      local campos = {}
+      for k in pairs(v) do
+        campos[#campos + 1] = tostring(k)
+        if #campos >= 6 then break end
+      end
+      ui.print(nome .. ": " .. table.concat(campos, ", "), 4, y, Palette.hex(0xFFFFFF))
+      y = y + 10
+    end
   end
-
-  mover_player()
-  interagir()
-  atualizar_camera()
-  if mensagem_t > 0 then mensagem_t = mensagem_t - 1 end
-
-  ui.clip(0, 0, TELA_L, TELA_A)
-  ui.cls(cor("ceu"))
-
-  ui.camera(0, math.floor(camera_y))
-  desenhar_cenario(frame)
-  desenhar_objetos(frame)
-  desenhar_player(frame)
-
-  ui.camera(0, 0)
-  desenhar_hud()
 end
