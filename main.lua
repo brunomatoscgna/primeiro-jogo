@@ -7,11 +7,12 @@ require "mapa"
 -- Desça os 20 andares, pegue as peças e religue o gerador.
 -- Setas: andar | Z ou CIMA: pular | CIMA/BAIXO na escada: subir/descer
 -- Desvie das caveiras e dos fantasmas.
+-- Comprimido (TADALA): por alguns segundos os fantasmas não tiram vida.
 -- ============================================================
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.32"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.33"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -177,6 +178,7 @@ pecas = {}           -- peças ainda no mapa
 gerador = nil
 inicio = { x = 32, y = 32 }
 inimigos = {}
+comprimidos = {}
 
 for lin = 1, MAPA_A do
   for col = 1, MAPA_L do
@@ -185,6 +187,7 @@ for lin = 1, MAPA_A do
     if c == "P" then table.insert(pecas, { x = x, y = y, pega = false }) end
     if c == "G" then gerador = { x = x, y = y } end
     if c == "S" then inicio = { x = x, y = y } end
+    if c == "C" then table.insert(comprimidos, { x = x, y = y, pego = false }) end
     if c == "K" then   -- caveira: anda no chão e vira nas paredes/beiradas
       table.insert(inimigos, { tipo = "skull", x = x + 2, y = y + TILE - 16,
                                w = 11, h = 16, vx = 0.5 })
@@ -205,8 +208,10 @@ player = {
   escada = false,             -- true enquanto está pendurado na escada
   pecas = 0,
   vida = 3, invencivel = 0,   -- invencivel: frames piscando após um choque
+  tadala = 0,                 -- frames restantes do efeito do comprimido
 }
 VIDA_MAX = 3
+TADALA_FRAMES = 8 * 60        -- 8 segundos
 checkpoint = { x = inicio.x, y = inicio.y }
 camera_y = 0
 energia = false
@@ -330,8 +335,9 @@ local ultimo_andar = 1
 local function recomecar()
   local p = player
   p.x, p.y, p.vx, p.vy = inicio.x, inicio.y, 0, 0
-  p.vida, p.pecas, p.escada = VIDA_MAX, 0, false
+  p.vida, p.pecas, p.escada, p.tadala = VIDA_MAX, 0, false, 0
   for _, pc in ipairs(pecas) do pc.pega = false end
+  for _, cp in ipairs(comprimidos) do cp.pego = false end
   checkpoint = { x = inicio.x, y = inicio.y }
   ultimo_andar = 1
 end
@@ -388,6 +394,15 @@ local function interagir()
     end
   end
 
+  -- comprimidos: liga o TADALA
+  if p.tadala > 0 then p.tadala = p.tadala - 1 end
+  for _, cp in ipairs(comprimidos) do
+    if not cp.pego and toca(p, cp.x + 3, cp.y + 8, 10, 8) then
+      cp.pego = true
+      p.tadala = TADALA_FRAMES
+    end
+  end
+
   -- faíscas: tira 1 de vida e volta ao checkpoint
   -- só a parte de baixo do bloco "^" dá choque (onde estão os fios)
   if p.invencivel > 0 then p.invencivel = p.invencivel - 1 end
@@ -404,7 +419,8 @@ local function interagir()
   -- inimigos (a caixa de toque é um pouco menor que o desenho)
   if p.invencivel == 0 then
     for _, e in ipairs(inimigos) do
-      if toca(p, e.x + 2, e.y + 2, e.w - 4, e.h - 4) then
+      local atravessa = e.tipo == "ghost" and p.tadala > 0
+      if not atravessa and toca(p, e.x + 2, e.y + 2, e.w - 4, e.h - 4) then
         levar_dano(e.tipo == "skull" and "Uma caveira te pegou!" or "Um fantasma te assustou!")
         return
       end
@@ -610,10 +626,23 @@ local function desenhar_boneco(anim, movendo, frame, x, y, w, h, virado)
   return true
 end
 
+local function desenhar_comprimidos(frame)
+  for _, cp in ipairs(comprimidos) do
+    if not cp.pego then
+      local x, y = cp.x + 4, cp.y + 10 + ((frame // 20) % 2)
+      ui.circfill(x + 2, y + 2, 2, cor("vermelho"))
+      ui.rectfill(x + 2, y, x + 4, y + 4, cor("vermelho"))
+      ui.rectfill(x + 5, y, x + 6, y + 4, cor("branco"))
+      ui.circfill(x + 7, y + 2, 2, cor("branco"))
+    end
+  end
+end
+
 local function desenhar_inimigos(frame)
   local cam = math.floor(camera_y)
   for _, e in ipairs(inimigos) do
-    if e.y + e.h > cam and e.y < cam + TELA_A then
+    local some = e.tipo == "ghost" and player.tadala > 0 and (frame // 3) % 2 == 0
+    if e.y + e.h > cam and e.y < cam + TELA_A and not some then
       if not desenhar_boneco(ANIM[e.tipo], true, frame, e.x, e.y, e.w, e.h, e.vx < 0) then
         ui.rectfill(e.x, e.y, e.x + e.w - 1, e.y + e.h - 1,
                     e.tipo == "skull" and cor("branco") or cor("estrela"))
@@ -640,7 +669,7 @@ local function diagnostico_sprites()
   local padrao = { ui=1, sfx=1, string=1, table=1, math=1, os=1, io=1,
     coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
     C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
-    inicio=1, inimigos=1, ANIM=1 }
+    inicio=1, inimigos=1, ANIM=1, comprimidos=1 }
   local y = 20
   ui.print("SPRITES NAO ENCONTRADOS. Tabelas globais:", 4, y, cor("vermelho"))
   for nome, v in pairs(_G) do
@@ -662,19 +691,33 @@ local function diagnostico_sprites()
   end
 end
 
+-- coração 9x8: dois círculos em cima e um "V" embaixo
+function desenhar_coracao(x, y, c)
+  ui.circfill(x + 2, y + 2, 2, c)
+  ui.circfill(x + 6, y + 2, 2, c)
+  for i = 0, 4 do
+    ui.line(x + i, y + 3 + i, x + 8 - i, y + 3 + i, c)
+  end
+end
+
 local function desenhar_hud()
   ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
   ui.print("ANDAR " .. andar_atual(player.y) .. "/" .. ANDARES, 6, 3, cor("texto"))
-  -- barra de vida
+  -- vida em corações
   ui.print("VIDA", 100, 3, cor("texto"))
   for i = 1, VIDA_MAX do
-    local x = 120 + (i - 1) * 14
-    ui.rectfill(x, 3, x + 11, 9, i <= player.vida and cor("vermelho") or cor("viga"))
+    desenhar_coracao(130 + (i - 1) * 12, 3, i <= player.vida and cor("vermelho") or cor("viga"))
   end
   ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 200, 3, cor("peca_l"))
-  ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 390, 3,
+  ui.print(energia and "ENERGIA: ON" or "ENERGIA: OFF", 340, 3,
            energia and cor("verde") or cor("vermelho"))
-  ui.print("v" .. VERSAO, TELA_L - 30, TELA_A - 10, cor("texto"))
+  ui.print("v" .. VERSAO, TELA_L - 36, 3, cor("estrela"))
+  if player.tadala > 0 then
+    local seg = (player.tadala + 59) // 60
+    local txt = "TADALA ON  " .. seg
+    local c = (player.tadala > 120 or (player.tadala // 8) % 2 == 0) and cor("branco") or cor("vermelho")
+    ui.print(txt, TELA_L / 2 - #txt * 3, 22, c)
+  end
   if mensagem and mensagem_t > 0 then
     ui.print(mensagem, TELA_L / 2 - #mensagem * 2, 250, cor("branco"))
   end
@@ -683,9 +726,29 @@ end
 -- ------------------------------------------------------------
 -- Loop principal (chamado por game.lua a cada frame)
 -- ------------------------------------------------------------
+-- Cores da paleta são 15 bits (5 por canal). Descobre de que lado fica o
+-- vermelho olhando a cor 0xac3232 (vermelho forte = 21, azul = 6).
+local VERMELHO_EM_BAIXO = true
+do
+  local ok, v = pcall(function() return Palette[Palette.hex(0xac3232) + 1] end)
+  if ok and type(v) == "number" then VERMELHO_EM_BAIXO = (v % 32) > ((v // 1024) % 32) end
+end
+
+local function avermelhar(v)
+  if type(v) ~= "number" then return v end
+  local a, b, c = v % 32, (v // 32) % 32, (v // 1024) % 32
+  local r, g, bl
+  if VERMELHO_EM_BAIXO then r, g, bl = a, b, c else r, g, bl = c, b, a end
+  r = math.min(31, r + 8)
+  g, bl = g * 2 // 5, bl * 2 // 5
+  if VERMELHO_EM_BAIXO then return r + g * 32 + bl * 1024 end
+  return bl + g * 32 + r * 1024
+end
+
 function loop(frame)
+  local tadala = player.tadala > 0
   for i = 1, #Palette do
-    ui.palset(i - 1, Palette[i])
+    ui.palset(i - 1, tadala and avermelhar(Palette[i]) or Palette[i])
   end
 
   mover_player()
@@ -700,6 +763,7 @@ function loop(frame)
   ui.camera(0, math.floor(camera_y))
   desenhar_cenario(frame)
   desenhar_objetos(frame)
+  desenhar_comprimidos(frame)
   desenhar_inimigos(frame)
   desenhar_player(frame)
 
