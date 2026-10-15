@@ -8,6 +8,10 @@ require "mapa"
 -- Setas: andar | Z ou CIMA: pular
 -- ============================================================
 
+
+FOLHA     = folha.png
+FUNDO_OFF = fundo_off.png
+FUNDO_ON  = fundo_on.png
 TILE = 16
 TELA_L, TELA_A = 480, 270
 MAPA_L = #MAPA[1]
@@ -65,9 +69,9 @@ end
 -- >>> AJUSTE AQUI: aponte para as referências de sprite do Lupi. <<<
 -- Enquanto FOLHA for nil, o jogo usa os desenhos provisórios.
 -- ------------------------------------------------------------
-FOLHA     = "folha.png"
-FUNDO_OFF = "fundo_off.png"
-FUNDO_ON  = "fundo_on.png"
+FOLHA     = FOLHA     or nil   -- folha.png
+FUNDO_OFF = FUNDO_OFF or nil   -- fundo_off.png
+FUNDO_ON  = FUNDO_ON  or nil   -- fundo_on.png
 FOLHA_COLS = 16                -- tiles por linha na folha.png
 
 SPR = {
