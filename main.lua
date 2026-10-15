@@ -15,7 +15,7 @@ require "mapa"
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.38"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.39"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -922,24 +922,21 @@ function desenhar_coracao(x, y, c)
 end
 
 local function desenhar_hud()
-  ui.rectfill(0, 0, TELA_L - 1, 25, cor("ceu"))
-  ui.line(0, 25, TELA_L - 1, 25, cor("fundo_on"))
-  local t = "TEMPO " .. relogio(tempo // 60)
-  ui.print(t, TELA_L / 2 - #t * 3, 15, cor("branco"))
+  -- tudo numa linha só: ANDAR | corações | TEMPO | PECAS | SCORE | TADALA | versão
+  ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
   ui.print("ANDAR " .. andar_atual(player.y) .. "/" .. ANDARES, 4, 3, cor("texto"))
-  -- vida em corações
-  ui.print("VIDA", 78, 3, cor("texto"))
   for i = 1, VIDA_MAX do
-    desenhar_coracao(106 + (i - 1) * 12, 3, i <= player.vida and cor("vermelho") or cor("viga"))
+    desenhar_coracao(78 + (i - 1) * 12, 3, i <= player.vida and cor("vermelho") or cor("viga"))
   end
-  ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 152, 3, cor("peca_l"))
-  ui.print("SCORE " .. string.format("%06d", score), 228, 3, cor("janela_on"))
+  ui.print("TEMPO " .. relogio(tempo // 60), 120, 3, cor("branco"))
+  ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 194, 3, cor("peca_l"))
+  ui.print("SCORE " .. string.format("%06d", score), 256, 3, cor("janela_on"))
   -- TADALA: ícone da cápsula + segundos restantes (some quando acaba)
   if player.tadala > 0 then
     local seg = (player.tadala + 59) // 60
     local c = (player.tadala > 120 or (player.tadala // 8) % 2 == 0) and cor("branco") or cor("vermelho")
-    desenhar_pilula(326, 4)
-    ui.print("TADALA ON " .. seg, 340, 3, c)
+    desenhar_pilula(336, 4)
+    ui.print("TADALA ON " .. seg, 350, 3, c)
   end
   ui.print("v" .. VERSAO, TELA_L - 36, 3, cor("estrela"))
   if mensagem and mensagem_t > 0 then
