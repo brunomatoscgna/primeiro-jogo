@@ -1,5 +1,5 @@
 require "palette"
-local MOD_SPRITES = require "sprites"
+require "sprites"
 require "mapa"
 
 -- ============================================================
@@ -59,47 +59,52 @@ end
 
 -- ------------------------------------------------------------
 -- SPRITES — pack "Cyberpunk Tileset 16x16" (itch.io), convertido p/ DB32
---   folha.png    : todos os tiles do jogo (ids abaixo)
---   fundo_off.png: cidade apagada | fundo_on.png: cidade acesa
 --
--- >>> AJUSTE AQUI: aponte para as referências de sprite do Lupi. <<<
--- Enquanto FOLHA for nil, o jogo usa os desenhos provisórios.
+-- O Lupi expõe cada PNG do repositório pelo caminho da pasta:
+--   img/t/5.png       -> Sprites.img.t["5"]   (um PNG por tile)
+--   img/fundo_off.png -> Sprites.img.fundo_off
+-- ui.spr desenha a imagem inteira. Se os PNGs não forem achados,
+-- o jogo usa os desenhos provisórios.
 -- ------------------------------------------------------------
--- Procura a referência de cada PNG da pasta Sprites/ pelos nomes mais prováveis.
-local function achar_sprite(nome)
-  local Maiusc = nome:sub(1, 1):upper() .. nome:sub(2)
-  local candidatos = {
-    function() return MOD_SPRITES[nome] end,
-    function() return Sprites[nome] end,
-    function() return sprites[nome] end,
-    function() return SPRITES[nome] end,
-    function() return _G[nome] end,
-    function() return _G[Maiusc] end,
-    function() return _G[nome:upper()] end,
-    function() return Sprites[nome .. ".png"] end,
-    function() return MOD_SPRITES[nome .. ".png"] end,
-  }
-  for _, f in ipairs(candidatos) do
-    local ok, v = pcall(f)
-    if ok and type(v) == "table" then return v end
+local cache_tiles = {}
+
+local function sprite_tile(id)
+  local r = cache_tiles[id]
+  if r == nil then
+    local ok, v = pcall(function() return Sprites.img.t[tostring(id)] end)
+    r = (ok and type(v) == "table") and v or false
+    cache_tiles[id] = r
   end
+  return r or nil
+end
+
+local function sprite_img(nome)
+  local ok, v = pcall(function() return Sprites.img[nome] end)
+  if ok and type(v) == "table" then return v end
   return nil
 end
 
+-- desenha o tile <id> da folha (mesma numeração da folha.png)
+local function desenha(id, x, y, flip_x)
+  local r = sprite_tile(id)
+  if r then ui.spr(r, x, y, flip_x or false, false) end
+end
+
 local function carregar_sprites()
-  FOLHA     = FOLHA     or achar_sprite("folha")       -- Sprites/folha.png
-  FUNDO_OFF = FUNDO_OFF or achar_sprite("fundo_off")   -- Sprites/fundo_off.png
-  FUNDO_ON  = FUNDO_ON  or achar_sprite("fundo_on")    -- Sprites/fundo_on.png
+  cache_tiles = {}
+  FOLHA     = sprite_tile(0) ~= nil       -- true = sprites disponíveis
+  FUNDO_OFF = sprite_img("fundo_off")
+  FUNDO_ON  = sprite_img("fundo_on")
+  if not FOLHA then FOLHA = nil end
 end
 carregar_sprites()
-FOLHA_COLS = 16                -- tiles por linha na folha.png
 
 SPR = {
   parede_solta = 9,                          -- 0..8 = parede 3x3 (9-slice)
   barra_e = 10, barra_m = 11, barra_d = 12,  -- parede de 1 bloco de altura
   viga_e = 13, viga_m = 14, viga_d = 15, viga_solta = 31,
   fundo = 16, fundo_on = 24,
-  janela = 17, janela_on = 19,               -- +16 = parte de baixo
+  janela = 17, janela_on = 19,               -- +1 = parte de baixo
   peca = 21,
   gerador = 22,                              -- +1 = parte de baixo
   raio = 25,                                 -- 2x3 tiles: 25..30
@@ -143,14 +148,6 @@ for lin = 0, MAPA_A - 1 do
   end
 end
 
--- Desenha uma imagem grande (ex.: fundo 480x272) tile a tile.
-local function desenhar_imagem(ref, x, y, cols, lins)
-  for ty = 0, lins - 1 do
-    for tx = 0, cols - 1 do
-      ui.tile(ref, ty * cols + tx, x + tx * TILE, y + ty * TILE)
-    end
-  end
-end
 
 -- ------------------------------------------------------------
 -- Estado do jogo
@@ -312,12 +309,12 @@ local function desenhar_bloco(c, x, y, frame)
   if FOLHA then
     local col, lin = x // TILE, y // TILE
     if c == "#" or c == "=" then
-      ui.tile(FOLHA, AUTOTILE[lin][col], x, y)
+      desenha(AUTOTILE[lin][col], x, y)
       return
     elseif c == "w" then
       local id = energia and SPR.janela_on or SPR.janela
-      ui.tile(FOLHA, id, x, y)
-      ui.tile(FOLHA, id + FOLHA_COLS, x, y + TILE)
+      desenha(id, x, y)
+      desenha(id + 1, x, y + TILE)
       return
     end
     -- "^" (faíscas) ainda sem sprite: cai no desenho provisório abaixo
@@ -364,13 +361,13 @@ local function desenhar_cenario(frame)
     -- cidade ao fundo (só aparece perto do telhado), com leve parallax
     if cam < ALTURA_ANDAR * TILE and FUNDO_OFF then
       local fy = cam // 2   -- topo da imagem no topo da fase
-      desenhar_imagem(energia and FUNDO_ON or FUNDO_OFF, 0, fy, 30, 17)
+      ui.spr(energia and FUNDO_ON or FUNDO_OFF, 0, fy, false, false)
     end
     -- parede interna do prédio
     local id_fundo = energia and SPR.fundo_on or SPR.fundo
     for lin = math.max(lin_ini, ALTURA_ANDAR), lin_fim do
       for col = 0, MAPA_L - 1 do
-        ui.tile(FOLHA, id_fundo, col * TILE, lin * TILE)
+        desenha(id_fundo, col * TILE, lin * TILE)
       end
     end
     for lin = lin_ini, lin_fim do
@@ -425,18 +422,18 @@ local function desenhar_objetos(frame)
     -- peças: turbina flutuando
     for _, pc in ipairs(pecas) do
       if not pc.pega then
-        ui.tile(FOLHA, SPR.peca, pc.x, pc.y + ((frame // 15) % 2) * 2 - 1)
+        desenha(SPR.peca, pc.x, pc.y + ((frame // 15) % 2) * 2 - 1)
       end
     end
     if gerador then
       local g = gerador
-      ui.tile(FOLHA, SPR.gerador, g.x, g.y - TILE)
-      ui.tile(FOLHA, SPR.gerador + FOLHA_COLS, g.x, g.y)
+      desenha(SPR.gerador, g.x, g.y - TILE)
+      desenha(SPR.gerador + 1, g.x, g.y)
       -- raio de neon: aceso com energia; sem energia, só "falha" de vez em quando
       if energia or frame % 120 < 5 then
         for ty = 0, 2 do
           for tx = 0, 1 do
-            ui.tile(FOLHA, SPR.raio + ty * 2 + tx, g.x + 24 + tx * TILE, g.y - 2 * TILE + ty * TILE)
+            desenha(SPR.raio + ty * 2 + tx, g.x + 24 + tx * TILE, g.y - 2 * TILE + ty * TILE)
           end
         end
       end
@@ -478,32 +475,10 @@ local function desenhar_player(frame)
   ui.line(lx, y + 1, lx + p.dir * 2, y + 1, cor("lanterna"))
 end
 
--- Se a folha não foi encontrada, lista as tabelas globais (para descobrir o nome)
+-- Aviso quando os PNGs não foram encontrados
 local function diagnostico_sprites()
   if FOLHA then return end
-  local padrao = { ui=1, sfx=1, string=1, table=1, math=1, os=1, io=1,
-    coroutine=1, utf8=1, package=1, debug=1, _G=1, Palette=1, MAPA=1,
-    C=1, SPR=1, AUTOTILE=1, player=1, pecas=1, gerador=1, checkpoint=1,
-    inicio=1 }
-  local y = 20
-  ui.print("SPRITES NAO ENCONTRADOS. Tabelas globais:", 4, y, cor("vermelho"))
-  for nome, v in pairs(_G) do
-    if type(v) == "table" and not padrao[nome] then
-      local campos = {}
-      for k in pairs(v) do
-        campos[#campos + 1] = tostring(k)
-        if #campos >= 6 then break end
-      end
-      y = y + 10
-      ui.print(nome .. ": " .. table.concat(campos, ", "), 4, y, cor("branco"))
-    end
-  end
-  if type(MOD_SPRITES) == "table" then
-    local campos = {}
-    for k in pairs(MOD_SPRITES) do campos[#campos + 1] = tostring(k) end
-    y = y + 10
-    ui.print("require sprites: " .. table.concat(campos, ", "), 4, y, cor("branco"))
-  end
+  ui.print("SPRITES NAO ENCONTRADOS: confira se existe img/t/0.png", 4, 20, cor("vermelho"))
 end
 
 local function desenhar_hud()
