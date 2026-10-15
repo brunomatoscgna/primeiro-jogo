@@ -991,10 +991,10 @@ end
 local function desenhar_menu(frame)
   painel(100, 40, 380, 230)
   centro("FIM DOS TEMPOS", 56, cor("janela_on"))
-  centro("A cidade apagou. So o vovo pode religar.", 74, cor("texto"))
+  centro("A cidade apagou. So o SEU ADILSON pode religar.", 74, cor("texto"))
   if ajuda then
     local linhas = {
-      "SETAS: andar   Z ou CIMA: pular",
+      "SETAS: andar   B ou CIMA: pular",
       "CIMA/BAIXO na escada: subir e descer",
       "Pegue as 5 pecas e religue o gerador",
       "no subsolo. Depois, elevador ao topo!",
