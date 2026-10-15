@@ -86,9 +86,12 @@ local function achar_sprite(nome)
   return nil
 end
 
-FOLHA     = achar_sprite("folha")       -- Sprites/folha.png
-FUNDO_OFF = achar_sprite("fundo_off")   -- Sprites/fundo_off.png
-FUNDO_ON  = achar_sprite("fundo_on")    -- Sprites/fundo_on.png
+local function carregar_sprites()
+  FOLHA     = FOLHA     or achar_sprite("folha")       -- Sprites/folha.png
+  FUNDO_OFF = FUNDO_OFF or achar_sprite("fundo_off")   -- Sprites/fundo_off.png
+  FUNDO_ON  = FUNDO_ON  or achar_sprite("fundo_on")    -- Sprites/fundo_on.png
+end
+carregar_sprites()
 FOLHA_COLS = 16                -- tiles por linha na folha.png
 
 SPR = {
@@ -518,6 +521,7 @@ end
 -- Loop principal (chamado por game.lua a cada frame)
 -- ------------------------------------------------------------
 function loop(frame)
+  if not FOLHA then carregar_sprites() end   -- caso o Lupi carregue depois
   for i = 1, #Palette do
     ui.palset(i - 1, Palette[i])
   end
