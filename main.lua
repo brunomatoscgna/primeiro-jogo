@@ -62,7 +62,7 @@ end
 --
 -- O Lupi expõe cada PNG do repositório pelo caminho da pasta:
 --   img/t/5.png       -> Sprites.img.t["5"]   (um PNG por tile)
---   img/fundo_off/1.png -> Sprites.img.fundo_off["1"] (fundo em 4 pedaços)
+--   img/fundo_off/1.png -> Sprites.img.fundo_off["1"] (fundo em 12 pedaços)
 -- ui.spr desenha a imagem inteira. Se os PNGs não forem achados,
 -- o jogo usa os desenhos provisórios.
 -- ------------------------------------------------------------
@@ -78,15 +78,17 @@ local function sprite_tile(id)
   return r or nil
 end
 
--- fundo dividido em 4 pedaços: img/<nome>/1.png .. 4.png
+-- fundo dividido em 12 pedaços de 80x136: img/<nome>/1.png .. 12.png
+FUNDO_PEDACOS_X, FUNDO_PEDACO_L, FUNDO_PEDACO_A = 6, 80, 136
+
 local function sprite_img(nome)
   local ok, v = pcall(function()
-    local pasta = Sprites.img[nome]
-    local p = { pasta["1"], pasta["2"], pasta["3"], pasta["4"] }
-    for i = 1, 4 do
+    local pasta, p = Sprites.img[nome], {}
+    for i = 1, FUNDO_PEDACOS_X * 2 do
+      p[i] = pasta[tostring(i)]
       if type(p[i]) ~= "table" then return nil end
     end
-    return { ["1"] = p[1], ["2"] = p[2], ["3"] = p[3], ["4"] = p[4] }
+    return p
   end)
   if ok then return v end
   return nil
@@ -375,10 +377,11 @@ local function desenhar_cenario(frame)
     if cam < ALTURA_ANDAR * TILE and FUNDO_OFF then
       local fy = cam // 2   -- topo da imagem no topo da fase
       local f = energia and FUNDO_ON or FUNDO_OFF
-      ui.spr(f["1"], 0,   fy,       false, false)
-      ui.spr(f["2"], 240, fy,       false, false)
-      ui.spr(f["3"], 0,   fy + 136, false, false)
-      ui.spr(f["4"], 240, fy + 136, false, false)
+      for i, pedaco in ipairs(f) do
+        local px = ((i - 1) % FUNDO_PEDACOS_X) * FUNDO_PEDACO_L
+        local py = ((i - 1) // FUNDO_PEDACOS_X) * FUNDO_PEDACO_A
+        ui.spr(pedaco, px, fy + py, false, false)
+      end
     end
     -- parede interna do prédio
     local id_fundo = energia and SPR.fundo_on or SPR.fundo
