@@ -15,7 +15,7 @@ require "mapa"
 
 TILE = 16
 TELA_L, TELA_A = 480, 270
-VERSAO = "1.36"   -- manter igual ao "version" do lupi.yaml
+VERSAO = "1.37"   -- manter igual ao "version" do lupi.yaml
 MAPA_L = #MAPA[1]
 MAPA_A = #MAPA
 
@@ -991,7 +991,8 @@ end
 local function desenhar_menu(frame)
   painel(100, 40, 380, 230)
   centro("FIM DOS TEMPOS", 56, cor("janela_on"))
-  centro("A cidade apagou. So o SEU ADILSON pode religar.", 74, cor("texto"))
+  centro("A cidade apagou.", 72, cor("texto"))
+  centro("So o SEU ADILSON pode religar.", 84, cor("texto"))
   if ajuda then
     local linhas = {
       "SETAS: andar   B ou CIMA: pular",
@@ -1001,7 +1002,7 @@ local function desenhar_menu(frame)
       "Comprimido: vira samurai por 8 seg.",
       "Dois seguidos? O coracao nao aguenta.",
     }
-    for i, t in ipairs(linhas) do centro(t, 96 + (i - 1) * 14, cor("branco")) end
+    for i, t in ipairs(linhas) do centro(t, 102 + (i - 1) * 14, cor("branco")) end
     centro("Z: voltar", 208, cor("rebite"))
   else
     desenhar_opcoes(MENU_ITENS, 120, frame)
