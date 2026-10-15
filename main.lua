@@ -503,7 +503,19 @@ local function diagnostico_sprites()
   end
 end
 
+-- TESTE: desenha a folha.png inteira no canto (Sprites/folha.png -> Sprites.Sprites.folha)
+local function teste_sprite()
+  local ok, ref = pcall(function() return Sprites.Sprites.folha end)
+  if not ok or type(ref) ~= "table" then
+    ui.print("TESTE: folha nao achada (" .. type(ref) .. ")", 4, 236, cor("vermelho"))
+    return
+  end
+  local ok2, erro = pcall(ui.spr, ref, 4, 220, false, false)
+  if not ok2 then ui.print("TESTE spr: " .. tostring(erro), 4, 254, cor("vermelho")) end
+end
+
 local function desenhar_hud()
+  teste_sprite()
   ui.rectfill(0, 0, TELA_L - 1, 13, cor("ceu"))
   ui.print("ANDAR " .. andar_atual(player.y) .. "/7", 6, 3, cor("texto"))
   ui.print("PECAS " .. player.pecas .. "/" .. TOTAL_PECAS, 200, 3, cor("peca_l"))
